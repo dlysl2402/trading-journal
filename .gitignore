@@ -1,5 +1,8 @@
 node_modules/
 
+# Broker statements: they carry the account holder's name and account number.
+*.xlsx
+
 .env
 .env.*
 !.env.example
