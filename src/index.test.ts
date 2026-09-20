@@ -1,7 +1,8 @@
-import { expect, test } from 'vitest'
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
 
-import { main } from './index.js'
+import { main } from './index.ts'
 
 test('main runs', () => {
-  expect(() => main()).not.toThrow()
+  assert.doesNotThrow(main)
 })
