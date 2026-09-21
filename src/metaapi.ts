@@ -8,8 +8,21 @@
  * quarantined here so that `journal.ts` works with plain objects.
  *
  * Nothing here interprets. The shapes below name only the fields the journal
- * reads; the snapshot written each run keeps everything MetaApi sent.
+ * reads; the snapshot written each run keeps everything MetaApi sent, with
+ * one exception. MetaApi stamps every deal and order with the account
+ * currency's exchange rate *as of the fetch*, so the field changes on every
+ * pull and says nothing about the deal. It is dropped here, before the row
+ * reaches the record, or every row would look amended fifteen minutes later.
  */
+
+/** Fields that describe the fetch, not the history, so they are not recorded. */
+const FETCH_TIME_FIELDS = ['accountCurrencyExchangeRate']
+
+export function withoutFetchTimeFields<T extends object>(row: T): T {
+  const copy = { ...row } as Record<string, unknown>
+  for (const field of FETCH_TIME_FIELDS) delete copy[field]
+  return copy as T
+}
 
 /** MetaApi pages at 1000 rows and reports no total, so pages are walked. */
 const PAGE = 1000
@@ -137,5 +150,10 @@ export async function fetchFeed(
     paged<RawDeal>(credentials, `/history-deals${window}`),
     paged<RawOrder>(credentials, `/history-orders${window}`),
   ])
-  return { account, deals, orders, fetchedAt: now }
+  return {
+    account,
+    deals: deals.map(withoutFetchTimeFields),
+    orders: orders.map(withoutFetchTimeFields),
+    fetchedAt: now,
+  }
 }

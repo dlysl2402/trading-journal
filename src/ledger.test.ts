@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { merge } from './ledger.ts'
+import { withoutFetchTimeFields } from './metaapi.ts'
 import type { RawDeal, RawOrder } from './metaapi.ts'
 
 function deal(id: string, over: Partial<RawDeal> = {}): RawDeal {
@@ -51,4 +52,12 @@ test('a field the journal does not read still counts', () => {
   const other = { ...deal('1'), magic: 8 } as RawDeal
   assert.throws(() => merge(rows([extra]), rows([other])), /differ/)
   assert.deepEqual(merge(rows([extra]), rows([{ ...extra }])), rows())
+})
+
+test('the exchange rate MetaApi stamps at fetch time is not part of the row', () => {
+  const stamped = { ...deal('1'), accountCurrencyExchangeRate: 0.71257 } as RawDeal
+  const later = { ...deal('1'), accountCurrencyExchangeRate: 0.71255 } as RawDeal
+  assert.throws(() => merge(rows([stamped]), rows([later])), /differ/)
+  assert.deepEqual(merge(rows([withoutFetchTimeFields(stamped)]), rows([withoutFetchTimeFields(later)])), rows())
+  assert.deepEqual(withoutFetchTimeFields(stamped), deal('1'))
 })
