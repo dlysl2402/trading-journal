@@ -1,11 +1,16 @@
 -- The trading journal's record. Run once in the Supabase SQL editor.
 --
+-- This file is the contract between the two repositories. `trading-journal`
+-- (this one) writes; `trading-journal-frontend` reads, and declares the same row
+-- shapes in its `src/rows.ts`. Adding a field is safe from either side;
+-- renaming or removing one needs both in the same breath.
+--
 -- Two kinds of table. The broker's tables (deals, orders, accounts) hold each
 -- row exactly as MetaApi sent it and are written only by the scheduled import,
 -- using the project's secret key. Your table (annotations) holds what you add
--- and is written only by the UI, logged in as you. Trades, P&L and every chart
--- are recomputed from the broker's rows on demand and never stored, so a
--- number on a screen can never disagree with the record beneath it.
+-- and is written only by the web app, logged in as you. Trades, P&L and every
+-- chart are recomputed from the broker's rows in the browser and never stored,
+-- so a number on a screen can never disagree with the record beneath it.
 
 -- Layer 1: the broker's pen.
 

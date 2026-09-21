@@ -5,7 +5,8 @@
  * synchronisation state that a poll has no use for. Three GETs cover the whole
  * feed, so this module is three GETs. Everything awkward about their API —
  * the region buried in the hostname, the silent 1000-row page limit — is
- * quarantined here so that `journal.ts` works with plain objects.
+ * quarantined here so that everything downstream — this repository's ledger,
+ * and the web app reading the record afterwards — works with plain objects.
  *
  * Nothing here interprets. The shapes below name only the fields the journal
  * reads; the snapshot written each run keeps everything MetaApi sent, with

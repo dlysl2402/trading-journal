@@ -1,6 +1,5 @@
 /**
- * One pass of the import: fetch the account, add what is new to the record,
- * rebuild the view.
+ * One pass of the import: fetch the account, add what is new to the record.
  *
  * Deliberately a one-shot rather than a process that sleeps. Run under a timer
  * — systemd, cron, launchd — it has no state to corrupt between runs, no
@@ -9,15 +8,16 @@
  * a timer reports as a failure, so failures are loud rather than silent.
  *
  * The record lives in Supabase and only ever grows: `ledger.ts` refuses a feed
- * that has lost or altered a row it already holds. Two local files are also
- * written. `data/snapshot.json` is the raw response of this run, so a parsing
- * question can be re-asked offline without hitting the API again. `equity.html`
- * is the current view.
+ * that has lost or altered a row it already holds. One local file is also
+ * written — `data/snapshot.json`, the raw response of this run, so a parsing
+ * question can be re-asked offline without hitting the API again.
+ *
+ * Nothing here interprets and nothing here draws. Grouping deals into trades,
+ * and every figure worked out from them, belong to `trading-journal-frontend`,
+ * which reads this record from the browser.
  */
 
 import { mkdirSync, writeFileSync } from 'node:fs'
-import { renderPage } from './chart.ts'
-import { buildJournal } from './journal.ts'
 import { load, merge, save } from './ledger.ts'
 import { credentialsFromEnv, fetchFeed } from './metaapi.ts'
 import type { RawFeed } from './metaapi.ts'
@@ -43,8 +43,9 @@ export async function update(): Promise<string> {
   const feed = await fetchFeed(credentials)
   checkReadOnly(feed)
 
-  // Record first, interpret second. A deal the journal has no shape for yet
-  // still happened, and belongs on record before the run fails on it.
+  // The record takes whatever the broker booked, whether or not anything can
+  // yet make a trade of it. A deal with a shape the journal refuses still
+  // happened, and belongs on record before anyone argues about it.
   const stored = await load(store, credentials.accountId)
   const added = merge(stored, feed)
   await save(store, credentials.accountId, added, feed)
@@ -53,16 +54,12 @@ export async function update(): Promise<string> {
   mkdirSync('data', { recursive: true })
   writeFileSync('data/snapshot.json', JSON.stringify(feed, null, 2))
 
-  const journal = buildJournal(feed)
-  writeFileSync('equity.html', renderPage(journal))
-
-  const { account, serverUtcOffsetMinutes: offset } = journal
+  const { account } = feed
   return [
-    `${feed.fetchedAt.toISOString()} ${account.id} ${account.broker}`,
+    `${feed.fetchedAt.toISOString()} ${account.login} ${account.broker}`,
     `${feed.deals.length} deals on record, ${added.deals.length} new`,
-    `${journal.trades.length} trades`,
-    `balance ${journal.balance.toFixed(2)} ${account.currency}`,
-    `server UTC${offset === null ? '?' : offset >= 0 ? `+${offset / 60}` : offset / 60}`,
+    `${feed.orders.length} orders on record, ${added.orders.length} new`,
+    `balance ${account.balance.toFixed(2)} ${account.currency}`,
   ].join(' · ')
 }
 

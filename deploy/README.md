@@ -1,8 +1,9 @@
 # Running the import on a schedule
 
 One pass is `npm run update`: fetch the account, add anything new to the
-record in Supabase, rebuild `equity.html`, write `data/snapshot.json`. It exits
-non-zero if anything failed, which is what makes it safe to drive from a timer.
+record in Supabase, write `data/snapshot.json`. It exits non-zero if anything
+failed, which is what makes it safe to drive from a timer. Nothing is drawn —
+the page lives in `trading-journal-frontend` and reads Supabase for itself.
 
 ## Setting up Supabase (once)
 
@@ -46,9 +47,9 @@ doctl apps logs <app-id> update --type run        # what recent passes said
 Node is pinned to 24 or newer in `package.json` because the buildpack would
 otherwise pick 22, which cannot run this code. The buildpack's newest is 25.x.
 
-The job's disk is thrown away after each run, so `equity.html` and
-`data/snapshot.json` exist only for the seconds the pass takes. The record in
-Supabase is the only thing that persists, which is the point.
+The job's disk is thrown away after each run, so `data/snapshot.json` exists
+only for the seconds the pass takes. The record in Supabase is the only thing
+that persists, which is the point.
 
 ## On the droplet
 
