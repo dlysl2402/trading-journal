@@ -4,12 +4,11 @@
  * MetaApi ships an SDK, but nearly all of it manages WebSocket streaming and
  * synchronisation state that a poll has no use for. Three GETs cover the whole
  * feed, so this module is three GETs. Everything awkward about their API —
- * the region buried in the hostname, the silent 1000-row page limit, the
- * separate host for provisioning — is quarantined here so that `feed.ts`
- * works with plain objects.
+ * the region buried in the hostname, the silent 1000-row page limit — is
+ * quarantined here so that `journal.ts` works with plain objects.
  *
- * Nothing here interprets. The shapes below mirror what MetaApi sends, right
- * down to the fields it omits rather than sends as null.
+ * Nothing here interprets. The shapes below name only the fields the journal
+ * reads; the snapshot written each run keeps everything MetaApi sent.
  */
 
 /** MetaApi pages at 1000 rows and reports no total, so pages are walked. */
@@ -27,54 +26,41 @@ export interface Credentials {
 
 /**
  * A deal as MetaApi sends it. Optional fields really are absent, not null:
- * a balance deal carries no symbol, and a market order no stop.
+ * a deposit carries no symbol, and a fill with no stop set carries no stop.
  */
 export interface RawDeal {
   id: string
+  /** DEAL_TYPE_BUY, DEAL_TYPE_SELL, DEAL_TYPE_BALANCE, or a kind the journal refuses. */
   type: string
+  /** DEAL_ENTRY_IN or DEAL_ENTRY_OUT on a fill; absent on a deposit. */
   entryType?: string
   /** True UTC. */
   time: string
-  /** The same instant in the broker's own timezone: "YYYY-MM-DD HH:mm:ss.SSS". */
+  /** The same instant on the broker's clock: "YYYY-MM-DD HH:mm:ss.SSS". */
   brokerTime: string
   symbol?: string
   volume?: number
   price?: number
   commission: number
   swap: number
+  /** Gross, booked on the closing fill. A deposit puts its amount here too. */
   profit: number
   orderId?: string
   positionId?: string
-  /** The comment as first set — an EA's own tag, where one placed the order. */
-  comment?: string
-  /** The comment as it stands now, which MT5 overwrites when a bracket fires. */
-  brokerComment?: string
-  /** Why the deal fired: DEAL_REASON_SL, _TP, _CLIENT, _MOBILE, _EXPERT. */
+  /** What fired the deal: DEAL_REASON_SL, _TP, _CLIENT, _MOBILE, _WEB, _EXPERT, _SO. */
   reason?: string
+  /** The position's levels as they stood when this deal was booked. */
   stopLoss?: number
   takeProfit?: number
 }
 
 export interface RawOrder {
   id: string
-  type: string
-  state: string
-  symbol: string
-  time: string
-  brokerTime: string
-  /** When it filled; absent if it never did. */
-  doneTime?: string
-  /** The same instant in the broker's timezone. */
-  doneBrokerTime?: string
-  /** Zero for a market order — MT5 stores no requested price for one. */
-  openPrice: number
-  /** The size asked for. */
-  volume: number
-  /** The part still unfilled, so filled volume is `volume - currentVolume`. */
-  currentVolume: number
-  positionId: string
+  /**
+   * The comment as MetaApi first saw it. MT5 overwrites a comment with the
+   * bracket that fired, so this may read "[tp 4382.63]" rather than a tag.
+   */
   comment?: string
-  brokerComment?: string
   stopLoss?: number
   takeProfit?: number
 }
@@ -82,17 +68,10 @@ export interface RawOrder {
 export interface RawAccount {
   broker: string
   currency: string
-  server: string
   login: number
-  name: string
   balance: number
-  equity: number
-  /** ACCOUNT_MARGIN_MODE_RETAIL_HEDGING, _RETAIL_NETTING or _EXCHANGE. */
-  marginMode: string
   /** True when MetaApi holds the investor password rather than the master one. */
   investorMode: boolean
-  /** Whether MetaApi is permitted to place trades on this account. */
-  tradeAllowed: boolean
 }
 
 export interface RawFeed {

@@ -1,17 +1,12 @@
 /**
- * Temporary: draws the account's growth as one self-contained HTML file.
+ * Draws the account's growth as one self-contained HTML file.
  *
- * Reads a statement, writes `equity.html` beside this project, done. No
- * server, no dependencies, nothing to install — open the file in a browser.
- * The running total here is a preview of layer 3 and will move there; the
- * page itself is a placeholder until there is a real UI.
+ * No server, no dependencies — `update.ts` writes `equity.html` and a browser
+ * opens it. The running total here is a preview of layer 3 and will move
+ * there; the page itself is a placeholder until there is a real UI.
  */
 
-import { writeFileSync } from 'node:fs'
-import { readStatement } from './statement.ts'
-import type { Statement } from './ledger.ts'
-import type { Trade } from './trade.ts'
-import { buildTrades } from './trades.ts'
+import type { Journal, Trade } from './journal.ts'
 
 /** One step of the curve: the running net result after a trade closed. */
 export interface EquityPoint {
@@ -53,18 +48,11 @@ export function equityCurve(trades: Trade[]): EquityPoint[] {
 }
 
 /** Everything the page needs, as plain JSON. */
-function pageData(statement: Statement, trades: Trade[]) {
-  const deposits = statement.deals
-    .filter((deal) => deal.kind === 'balance')
-    .reduce((total, deal) => total + deal.amount, 0)
-  const latest = [...statement.deals].sort((a, b) => b.time.getTime() - a.time.getTime())[0]
-
+function pageData({ account, balance, deposited, trades }: Journal) {
   return {
-    account: statement.account,
-    deposited: deposits,
-    // The live feed states the balance outright; a report only leaves a
-    // running total on its last deal.
-    balance: statement.reportedBalance ?? latest?.balance ?? 0,
+    account,
+    deposited,
+    balance,
     wins: trades.filter((trade) => netOf(trade) > 0).length,
     points: equityCurve(trades).map((point) => ({
       time: point.time.getTime(),
@@ -78,9 +66,9 @@ function pageData(statement: Statement, trades: Trade[]) {
   }
 }
 
-export function renderPage(statement: Statement, trades: Trade[]): string {
+export function renderPage(journal: Journal): string {
   // `<` in a JSON string would end the script tag early; escape it defensively.
-  const json = JSON.stringify(pageData(statement, trades)).replaceAll('<', '\\u003c')
+  const json = JSON.stringify(pageData(journal)).replaceAll('<', '\\u003c')
   return TEMPLATE.replace('__DATA__', json)
 }
 
@@ -407,16 +395,3 @@ for (const p of trades) {
 </body>
 </html>
 `
-
-export function main(argv: string[] = []): void {
-  const [path, out = 'equity.html'] = argv
-  if (!path) {
-    console.log('usage: node src/chart.ts <ReportHistory.xlsx> [equity.html]')
-    return
-  }
-  const statement = readStatement(path)
-  writeFileSync(out, renderPage(statement, buildTrades(statement)))
-  console.log(`wrote ${out}`)
-}
-
-if (import.meta.main) main(process.argv.slice(2))

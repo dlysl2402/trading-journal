@@ -1,31 +1,36 @@
-import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { join } from 'node:path'
-
+import test from 'node:test'
 import { equityCurve, renderPage } from './chart.ts'
-import { readStatement } from './statement.ts'
-import { buildTrades } from './trades.ts'
+import type { Journal, Trade } from './journal.ts'
 
-const FIXTURE = join(import.meta.dirname, '..', 'ReportHistory-51554919.xlsx')
-
-const statement = readStatement(FIXTURE)
-const trades = buildTrades(statement)
-const curve = equityCurve(trades)
-
-test('the curve starts at zero and has one point per trade', () => {
-  assert.equal(curve[0]?.equity, 0)
-  assert.equal(curve[0]?.trade, null)
-  assert.equal(curve.length, trades.length + 1)
-})
-
-test('the curve ends on the statement net result', () => {
-  assert.equal(curve.at(-1)?.equity.toFixed(2), '322.81')
-})
-
-test('the curve moves forward in time', () => {
-  for (let i = 1; i < curve.length; i++) {
-    assert.ok(curve[i]!.time >= curve[i - 1]!.time)
+function trade(positionId: string, net: number, opened: string, closed: string): Trade {
+  return {
+    positionId, symbol: 'XAUUSD', side: 'buy', tag: null,
+    entry: { dealId: positionId, time: new Date(opened), price: 100, volume: 1 },
+    exits: [{ dealId: positionId + 'x', time: new Date(closed), price: 101, volume: 1, reason: { kind: 'manual' } }],
+    stop: { initial: null, final: null }, target: { initial: null, final: null },
+    grossProfit: net + 1, commission: -1, swap: 0,
   }
+}
+
+// Given out of order, so the curve has to sort them itself.
+const trades = [
+  trade('2', -5, '2026-09-08T10:00:00Z', '2026-09-08T11:00:00Z'),
+  trade('1', 20, '2026-09-07T10:00:00Z', '2026-09-07T11:00:00Z'),
+  trade('3', 7.5, '2026-09-09T10:00:00Z', '2026-09-09T11:00:00Z'),
+]
+
+const journal: Journal = {
+  account: { id: '1', broker: 'Bad </script> Broker', currency: 'AUD' },
+  balance: 10_022.5, deposited: 10_000, serverUtcOffsetMinutes: 180, trades,
+}
+
+test('the curve starts at zero when the first trade opened, then steps once per trade', () => {
+  const curve = equityCurve(trades)
+  assert.deepEqual(curve.map((p) => p.equity), [0, 20, 15, 22.5])
+  assert.equal(curve[0]?.time.toISOString(), '2026-09-07T10:00:00.000Z')
+  assert.equal(curve[0]?.trade, null)
+  assert.deepEqual(curve.slice(1).map((p) => p.trade?.positionId), ['1', '2', '3'])
 })
 
 test('no trades means no curve', () => {
@@ -33,8 +38,9 @@ test('no trades means no curve', () => {
 })
 
 test('the page carries the data and cannot break out of its script tag', () => {
-  const html = renderPage(statement, trades)
-  assert.ok(html.includes('"balance":32322.81'))
+  const html = renderPage(journal)
+  assert.ok(html.includes('"balance":10022.5'))
+  assert.ok(html.includes('"wins":2'))
   assert.ok(!html.includes('__DATA__'))
-  assert.ok(!/const data = .*<\//.test(html.split('\n').find((line) => line.startsWith('const data')) ?? ''))
+  assert.ok(!html.includes('</script> Broker'))
 })

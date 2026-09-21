@@ -2,12 +2,9 @@
   "name": "trading-journal",
   "version": "0.1.0",
   "scripts": {
-    "start": "node src/index.ts",
-    "dev": "node --watch src/index.ts",
+    "update": "node src/update.ts",
     "test": "node --test",
-    "typecheck": "tsc",
-    "chart": "node src/chart.ts",
-    "update": "node src/update.ts"
+    "typecheck": "tsc"
   },
   "license": "ISC",
   "type": "module",

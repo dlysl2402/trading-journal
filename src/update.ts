@@ -1,5 +1,5 @@
 /**
- * One pass of the live import: fetch the account, rebuild everything from it.
+ * One pass of the import: fetch the account, rebuild everything from it.
  *
  * Deliberately a one-shot rather than a process that sleeps. Run under a timer
  * — systemd, cron, launchd — it has no state to corrupt between runs, no
@@ -7,24 +7,17 @@
  * costs a single cycle instead of the whole schedule. A non-zero exit is what
  * a timer reports as a failure, so failures are loud rather than silent.
  *
- * Two files are written each pass. `snapshot.json` keeps the raw feed exactly
- * as MetaApi sent it, so a parsing question can be re-asked offline without
- * hitting the API again, and so a monitor can read `fetchedAt` and notice the
- * feed has gone stale. `equity.html` is the current view.
+ * Two files are written each pass. `data/snapshot.json` keeps the raw feed
+ * exactly as MetaApi sent it, so a parsing question can be re-asked offline
+ * without hitting the API again, and so a monitor can read `fetchedAt` and
+ * notice the feed has gone stale. `equity.html` is the current view.
  */
 
 import { mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { renderPage } from './chart.ts'
-import { parseFeed } from './feed.ts'
+import { buildJournal } from './journal.ts'
 import { credentialsFromEnv, fetchFeed } from './metaapi.ts'
 import type { RawFeed } from './metaapi.ts'
-import { buildTrades } from './trades.ts'
-import type { Statement } from './ledger.ts'
-import type { Trade } from './trade.ts'
-
-/** Deals and orders carry the account holder's name; keep them out of git. */
-const DATA = 'data'
 
 /**
  * The credential MetaApi holds should be the investor password, which cannot
@@ -39,31 +32,26 @@ function checkReadOnly(feed: RawFeed): void {
     'MetaApi account with the read-only investor password.')
 }
 
-export function write(feed: RawFeed, statement: Statement, trades: Trade[]): void {
-  mkdirSync(DATA, { recursive: true })
-  writeFileSync(join(DATA, 'snapshot.json'), JSON.stringify(feed, null, 2))
-  writeFileSync('equity.html', renderPage(statement, trades))
-}
-
 export async function update(): Promise<string> {
   const feed = await fetchFeed(credentialsFromEnv())
   checkReadOnly(feed)
+  const journal = buildJournal(feed)
 
-  const statement = parseFeed(feed)
-  const trades = buildTrades(statement)
-  write(feed, statement, trades)
+  // Deals and orders carry the account holder's name; `data/` stays out of git.
+  mkdirSync('data', { recursive: true })
+  writeFileSync('data/snapshot.json', JSON.stringify(feed, null, 2))
+  writeFileSync('equity.html', renderPage(journal))
 
-  const { account } = statement
-  const offset = statement.serverUtcOffsetMinutes
+  const { account, serverUtcOffsetMinutes: offset } = journal
   return [
     `${feed.fetchedAt.toISOString()} ${account.id} ${account.broker}`,
-    `${statement.deals.length} deals, ${trades.length} trades`,
-    `balance ${statement.reportedBalance?.toFixed(2)} ${account.currency}`,
+    `${feed.deals.length} deals, ${journal.trades.length} trades`,
+    `balance ${journal.balance.toFixed(2)} ${account.currency}`,
     `server UTC${offset === null ? '?' : offset >= 0 ? `+${offset / 60}` : offset / 60}`,
   ].join(' · ')
 }
 
-export async function main(): Promise<void> {
+async function main(): Promise<void> {
   try {
     // Absent on a server that passes the credentials in as environment.
     process.loadEnvFile()
