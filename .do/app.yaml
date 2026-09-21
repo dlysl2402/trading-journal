@@ -1,0 +1,44 @@
+# DigitalOcean App Platform spec. Picked up automatically when the app is
+# created from this repository, or applied with:
+#   doctl apps create --spec .do/app.yaml
+#
+# One component: a scheduled job that runs one import pass every fifteen
+# minutes, the platform's minimum interval. There is no web service, because
+# nothing listens on a port. The job is billed only for the seconds it runs.
+#
+# The five secrets are declared here without values; enter them in the
+# control panel under the job's environment variables. Never write them
+# into this file.
+name: trading-journal
+region: syd
+
+jobs:
+  - name: update
+    kind: SCHEDULED
+    schedule:
+      cron: "*/15 * * * *"
+      time_zone: UTC
+    github:
+      repo: dlysl2402/trading-journal
+      branch: main
+      deploy_on_push: true
+    environment_slug: node-js
+    run_command: node src/update.ts
+    instance_count: 1
+    instance_size_slug: apps-s-1vcpu-0.5gb
+    envs:
+      - key: METAAPI_ACCOUNT_ID
+        scope: RUN_TIME
+        type: SECRET
+      - key: METAAPI_ACCESS_TOKEN
+        scope: RUN_TIME
+        type: SECRET
+      - key: METAAPI_REGION
+        scope: RUN_TIME
+        value: london
+      - key: SUPABASE_URL
+        scope: RUN_TIME
+        type: SECRET
+      - key: SUPABASE_SECRET_KEY
+        scope: RUN_TIME
+        type: SECRET

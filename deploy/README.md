@@ -27,6 +27,29 @@ editor next to what `data/snapshot.json` says. If the broker really did amend
 it, drop the trigger in the SQL editor, fix the row by hand, and recreate the
 trigger from `supabase/schema.sql`. Nothing is ever fixed silently.
 
+## On App Platform
+
+`.do/app.yaml` describes the whole app: one scheduled job, every fifteen
+minutes, no web service. Create the app from the GitHub repository and the
+spec is picked up. Then, under the job's environment variables, enter the
+five values from `.env.example`. They are declared in the spec as secrets
+without values on purpose.
+
+Check it from the control panel: the job's Runtime Logs show one line per
+pass, the same line `npm run update` prints. Or from the CLI:
+
+```sh
+doctl apps list                                   # the app id
+doctl apps logs <app-id> update --type run        # what recent passes said
+```
+
+Node is pinned to 24 or newer in `package.json` because the buildpack would
+otherwise pick 22, which cannot run this code. The buildpack's newest is 25.x.
+
+The job's disk is thrown away after each run, so `equity.html` and
+`data/snapshot.json` exist only for the seconds the pass takes. The record in
+Supabase is the only thing that persists, which is the point.
+
 ## On the droplet
 
 ```sh

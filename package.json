@@ -1,6 +1,9 @@
 {
   "name": "trading-journal",
   "version": "0.1.0",
+  "engines": {
+    "node": ">=24.2"
+  },
   "scripts": {
     "update": "node src/update.ts",
     "test": "node --test",
