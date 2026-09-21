@@ -65,3 +65,22 @@ test('a refusal names the status, the table and what the server said', async () 
     insert(store, 'deals', [{ id: '1' }]),
     /Supabase 409 on POST deals: .*duplicate key/)
 })
+
+test('a token rejected for clock skew is retried once a second later, nothing else is', async () => {
+  const skew = { status: 401, body: { code: 'PGRST303', message: 'JWT issued at future' } }
+  let calls = fakeFetch([skew, { body: [{ id: '1' }], total: 1 }])
+  const started = Date.now()
+  assert.deepEqual(await selectAll(store, 'deals', 'select=id'), [{ id: '1' }])
+  assert.equal(calls.length, 2)
+  assert.ok(Date.now() - started >= 900, 'waited about a second before retrying')
+
+  mock.restoreAll()
+  calls = fakeFetch([skew, skew])
+  await assert.rejects(selectAll(store, 'deals', 'select=id'), /Supabase 401 .*PGRST303/)
+  assert.equal(calls.length, 2, 'retried once, not forever')
+
+  mock.restoreAll()
+  calls = fakeFetch([{ status: 401, body: { code: 'PGRST301', message: 'JWT expired' } }])
+  await assert.rejects(selectAll(store, 'deals', 'select=id'), /PGRST301/)
+  assert.equal(calls.length, 1, 'a different 401 is not retried')
+})

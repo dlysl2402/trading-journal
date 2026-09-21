@@ -28,6 +28,14 @@ export function storeFromEnv(env: NodeJS.ProcessEnv = process.env): Store {
   return { url: url.replace(/\/$/, ''), key }
 }
 
+/**
+ * Supabase's gateway mints a short-lived token from the secret key on every
+ * request, and PostgREST now and then rejects that token as issued in the
+ * future because its clock is a hair behind the gateway's (PGRST303). The
+ * documented answer is one retry a second later, and only for that error.
+ */
+const CLOCK_SKEW = 'PGRST303'
+
 async function request(
   store: Store, method: 'GET' | 'POST', table: string, query: string,
   body?: unknown, prefer?: string,
@@ -39,10 +47,14 @@ async function request(
   }
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   if (prefer !== undefined) headers.Prefer = prefer
+  const init = { method, headers, body: body === undefined ? undefined : JSON.stringify(body) }
+  const url = `${store.url}/rest/v1/${table}${query}`
 
-  const response = await fetch(`${store.url}/rest/v1/${table}${query}`, {
-    method, headers, body: body === undefined ? undefined : JSON.stringify(body),
-  })
+  let response = await fetch(url, init)
+  if (response.status === 401 && (await response.clone().text()).includes(CLOCK_SKEW)) {
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+    response = await fetch(url, init)
+  }
   if (!response.ok) {
     // The body names the constraint or policy that refused; the status alone
     // cannot tell a bad key from a missing table.
