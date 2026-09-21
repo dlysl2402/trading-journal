@@ -24,11 +24,15 @@ export type DealEntry = 'in' | 'out' | 'inout'
 interface DealBase {
   id: DealId
   time: Date
-  /** Running account balance after this deal, straight from the statement. */
-  balance: number
+  /**
+   * Running account balance after this deal, straight from the statement.
+   * `null` from sources that do not report one: the live API sends a deal's
+   * own figures but never the balance they rolled up into.
+   */
+  balance: number | null
   comment: string | null
-  /** Row in the source sheet — keeps every field traceable to its origin. */
-  sourceRow: number
+  /** Row in the source sheet — `null` when the source was not a sheet. */
+  sourceRow: number | null
 }
 
 /** A fill: exposure changed hands. */
@@ -40,8 +44,15 @@ export interface TradeDeal extends DealBase {
   volume: number
   price: number
   orderId: OrderId
+  /**
+   * The round trip this fill belongs to, when the source says so. A statement
+   * never does — that is the gap layer 2 exists to close — but the live API
+   * states it outright, and a stated link beats a reconstructed one.
+   */
+  positionId: PositionId | null
   commission: number
-  fee: number
+  /** `null` where the source does not break fees out from commission. */
+  fee: number | null
   swap: number
   /** Gross, and zero on entry deals — MT5 books the whole result on the exit. */
   profit: number
@@ -79,7 +90,7 @@ export interface Order {
   takeProfit: number | null
   state: string
   comment: string | null
-  sourceRow: number
+  sourceRow: number | null
 }
 
 export interface Account {
@@ -100,6 +111,12 @@ export interface Statement {
    * rather than quietly defaulted to UTC.
    */
   serverUtcOffsetMinutes: number | null
+  /**
+   * The balance the broker reports right now, when the source states one.
+   * Every deal ever booked has to add up to it, which is the only check the
+   * live feed has that it fetched the whole history.
+   */
+  reportedBalance: number | null
   deals: Deal[]
   orders: Order[]
   positions: PositionRecord[]
@@ -129,5 +146,5 @@ export interface PositionRecord {
   swap: number
   /** Gross: net is profit + commission + swap. */
   profit: number
-  sourceRow: number
+  sourceRow: number | null
 }

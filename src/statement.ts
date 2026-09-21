@@ -168,6 +168,9 @@ function parseDeals(rows: string[][]): Deal[] {
       volume: toNumber(cells[5]!, row),
       price: toNumber(cells[6]!, row),
       orderId: cells[7]! as OrderId,
+      // The report never names the position a deal belongs to. See `feed.ts`
+      // for the live API, which does.
+      positionId: null,
       commission: toNumber(cells[8]!, row),
       fee: toNumber(cells[9]!, row),
       swap: toNumber(cells[10]!, row),
@@ -181,6 +184,9 @@ export function parseStatement(rows: string[][]): Statement {
     account: parseAccount(rows),
     generatedAt: toDate(labelled(rows, 'Date:'), 0),
     serverUtcOffsetMinutes: null,
+    // A history report states no account balance of its own; the running
+    // balance on the last deal is the closest it comes.
+    reportedBalance: null,
     positions: parsePositions(rows),
     orders: parseOrders(rows),
     deals: parseDeals(rows),

@@ -1,0 +1,18 @@
+[Unit]
+Description=Trading journal: refresh from MetaApi
+# The fetch is pointless before DNS and routing are up, and a timer that fires
+# during boot would otherwise log a failure every restart.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=journal
+WorkingDirectory=/srv/trading-journal
+# Holds METAAPI_ACCOUNT_ID, METAAPI_ACCESS_TOKEN and METAAPI_REGION. Keep it
+# 0600 and owned by the same user: it is a credential to the whole account.
+EnvironmentFile=/srv/trading-journal/.env
+ExecStart=/usr/bin/node src/update.ts
+# A failed fetch should not take the timer down with it; the next one is due
+# in fifteen minutes and the broker may simply have been in maintenance.
+SuccessExitStatus=0

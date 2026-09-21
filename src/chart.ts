@@ -62,7 +62,9 @@ function pageData(statement: Statement, trades: Trade[]) {
   return {
     account: statement.account,
     deposited: deposits,
-    balance: latest?.balance ?? 0,
+    // The live feed states the balance outright; a report only leaves a
+    // running total on its last deal.
+    balance: statement.reportedBalance ?? latest?.balance ?? 0,
     wins: trades.filter((trade) => netOf(trade) > 0).length,
     points: equityCurve(trades).map((point) => ({
       time: point.time.getTime(),

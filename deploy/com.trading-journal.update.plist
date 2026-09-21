@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The macOS counterpart of the systemd timer: run one pass every 15 minutes.
+
+  No credentials appear here on purpose. A LaunchAgent plist sits in the user's
+  own Library and is readable by anything running as that user, so the token
+  stays in .env, which `update.ts` loads from WorkingDirectory below.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.trading-journal.update</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <!-- Absolute: launchd starts jobs with a minimal PATH that has no node. -->
+    <string>/opt/homebrew/bin/node</string>
+    <string>src/update.ts</string>
+  </array>
+
+  <!-- Both the checkout and the directory .env is read from. -->
+  <key>WorkingDirectory</key>
+  <string>/Users/joshua/projects/trading/journal</string>
+
+  <key>StartInterval</key>
+  <integer>900</integer>
+
+  <!-- Skip the pass that would otherwise fire while the machine is waking. -->
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/trading-journal-update.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/trading-journal-update.log</string>
+</dict>
+</plist>

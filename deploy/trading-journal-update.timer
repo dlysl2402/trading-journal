@@ -1,0 +1,14 @@
+[Unit]
+Description=Refresh the trading journal every 15 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=15min
+# Nothing here needs to land on the exact quarter hour, and jitter keeps the
+# poll off the same second as everyone else's.
+RandomizedDelaySec=30s
+# Catch up once after downtime rather than replaying every missed run.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

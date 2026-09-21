@@ -6,7 +6,8 @@
     "dev": "node --watch src/index.ts",
     "test": "node --test",
     "typecheck": "tsc",
-    "chart": "node src/chart.ts"
+    "chart": "node src/chart.ts",
+    "update": "node src/update.ts"
   },
   "license": "ISC",
   "type": "module",
