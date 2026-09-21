@@ -9,8 +9,8 @@ Wants=network-online.target
 Type=oneshot
 User=journal
 WorkingDirectory=/srv/trading-journal
-# Holds METAAPI_ACCOUNT_ID, METAAPI_ACCESS_TOKEN and METAAPI_REGION. Keep it
-# 0600 and owned by the same user: it is a credential to the whole account.
+# Holds the MetaApi and Supabase credentials — see .env.example. Keep it
+# 0600 and owned by the same user: it is a credential to the account and the record.
 EnvironmentFile=/srv/trading-journal/.env
 ExecStart=/usr/bin/node src/update.ts
 # A failed fetch should not take the timer down with it; the next one is due

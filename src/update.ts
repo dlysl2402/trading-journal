@@ -1,5 +1,6 @@
 /**
- * One pass of the import: fetch the account, rebuild everything from it.
+ * One pass of the import: fetch the account, add what is new to the record,
+ * rebuild the view.
  *
  * Deliberately a one-shot rather than a process that sleeps. Run under a timer
  * — systemd, cron, launchd — it has no state to corrupt between runs, no
@@ -7,17 +8,20 @@
  * costs a single cycle instead of the whole schedule. A non-zero exit is what
  * a timer reports as a failure, so failures are loud rather than silent.
  *
- * Two files are written each pass. `data/snapshot.json` keeps the raw feed
- * exactly as MetaApi sent it, so a parsing question can be re-asked offline
- * without hitting the API again, and so a monitor can read `fetchedAt` and
- * notice the feed has gone stale. `equity.html` is the current view.
+ * The record lives in Supabase and only ever grows: `ledger.ts` refuses a feed
+ * that has lost or altered a row it already holds. Two local files are also
+ * written. `data/snapshot.json` is the raw response of this run, so a parsing
+ * question can be re-asked offline without hitting the API again. `equity.html`
+ * is the current view.
  */
 
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { renderPage } from './chart.ts'
 import { buildJournal } from './journal.ts'
+import { load, merge, save } from './ledger.ts'
 import { credentialsFromEnv, fetchFeed } from './metaapi.ts'
 import type { RawFeed } from './metaapi.ts'
+import { storeFromEnv } from './supabase.ts'
 
 /**
  * The credential MetaApi holds should be the investor password, which cannot
@@ -33,19 +37,30 @@ function checkReadOnly(feed: RawFeed): void {
 }
 
 export async function update(): Promise<string> {
-  const feed = await fetchFeed(credentialsFromEnv())
+  const credentials = credentialsFromEnv()
+  const store = storeFromEnv()
+
+  const feed = await fetchFeed(credentials)
   checkReadOnly(feed)
-  const journal = buildJournal(feed)
+
+  // Record first, interpret second. A deal the journal has no shape for yet
+  // still happened, and belongs on record before the run fails on it.
+  const stored = await load(store, credentials.accountId)
+  const added = merge(stored, feed)
+  await save(store, credentials.accountId, added, feed)
 
   // Deals and orders carry the account holder's name; `data/` stays out of git.
   mkdirSync('data', { recursive: true })
   writeFileSync('data/snapshot.json', JSON.stringify(feed, null, 2))
+
+  const journal = buildJournal(feed)
   writeFileSync('equity.html', renderPage(journal))
 
   const { account, serverUtcOffsetMinutes: offset } = journal
   return [
     `${feed.fetchedAt.toISOString()} ${account.id} ${account.broker}`,
-    `${feed.deals.length} deals, ${journal.trades.length} trades`,
+    `${feed.deals.length} deals on record, ${added.deals.length} new`,
+    `${journal.trades.length} trades`,
     `balance ${journal.balance.toFixed(2)} ${account.currency}`,
     `server UTC${offset === null ? '?' : offset >= 0 ? `+${offset / 60}` : offset / 60}`,
   ].join(' · ')

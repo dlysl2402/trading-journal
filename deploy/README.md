@@ -1,8 +1,31 @@
 # Running the import on a schedule
 
-One pass is `npm run update`: fetch the account, rebuild `equity.html`, write
-`data/snapshot.json`. It exits non-zero if anything failed, which is what makes
-it safe to drive from a timer.
+One pass is `npm run update`: fetch the account, add anything new to the
+record in Supabase, rebuild `equity.html`, write `data/snapshot.json`. It exits
+non-zero if anything failed, which is what makes it safe to drive from a timer.
+
+## Setting up Supabase (once)
+
+1. Create a project at supabase.com. The free tier is plenty for the record.
+2. In the SQL editor, paste and run `supabase/schema.sql`. It creates the
+   tables, the append-only triggers and the read-only policies.
+3. In Storage, create a **private** bucket named `videos`. Nothing uses it yet.
+4. Under Project Settings → API, copy the project URL and the *secret* key into
+   `.env` as `SUPABASE_URL` and `SUPABASE_SECRET_KEY`.
+
+Run `npm run update` once by hand. The first pass records the whole history;
+every later pass reports how many rows were new, usually zero.
+
+### If a run says a row on record is missing or differs
+
+The import never deletes or overwrites a broker row, and Postgres refuses to
+let anyone else do so either. So the run stops and names the ids. It means one
+of three things: MetaApi returned a short history (check the account is
+deployed and connected), the broker pruned or amended a deal (rare, and worth
+knowing about), or the account in `.env` changed. Look at the row in the table
+editor next to what `data/snapshot.json` says. If the broker really did amend
+it, drop the trigger in the SQL editor, fix the row by hand, and recreate the
+trigger from `supabase/schema.sql`. Nothing is ever fixed silently.
 
 ## On the droplet
 
@@ -55,8 +78,10 @@ A failed run is loud — non-zero exit, message on stderr, visible in
 failure worth watching for: a disconnected account keeps returning the last
 known history rather than an error.
 
-`data/snapshot.json` carries `fetchedAt` for exactly this. Anything older than
-about an hour means the feed has stopped, whatever the timer says:
+The `accounts` table carries `fetched_at` for exactly this, and it only moves
+once a pass has recorded every row, so it is readable from anywhere the UI is.
+Locally, `data/snapshot.json` carries the same instant as `fetchedAt`. Anything
+older than about an hour means the feed has stopped, whatever the timer says:
 
 ```sh
 node -e 'const t=new Date(require("./data/snapshot.json").fetchedAt);
