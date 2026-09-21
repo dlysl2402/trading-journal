@@ -24,6 +24,9 @@ export function withoutFetchTimeFields<T extends object>(row: T): T {
   return copy as T
 }
 
+import { resolve4 } from 'node:dns/promises'
+import { request } from 'node:https'
+
 /** MetaApi pages at 1000 rows and reports no total, so pages are walked. */
 const PAGE = 1000
 
@@ -106,27 +109,89 @@ export function credentialsFromEnv(env: NodeJS.ProcessEnv = process.env): Creden
   return { accountId, token, region }
 }
 
-async function get<T>(credentials: Credentials, path: string, query = ''): Promise<T> {
-  const host = `https://mt-client-api-v1.${credentials.region}.agiliumtrade.ai`
-  const url = `${host}/users/current/accounts/${credentials.accountId}${path}${query}`
+/** What one front server said. Returned, not thrown, so the caller decides per status. */
+export interface Reply {
+  status: number
+  body: string
+}
 
-  const response = await fetch(url, {
-    headers: { 'auth-token': credentials.token, Accept: 'application/json' },
+/** One GET to one address of a host, with the hostname kept for TLS and Host. */
+export type Transport = (host: string, address: string, path: string, token: string) => Promise<Reply>
+
+const httpsGet: Transport = (host, address, path, token) =>
+  new Promise((resolve, reject) => {
+    const req = request({
+      host,
+      path,
+      headers: { 'auth-token': token, Accept: 'application/json' },
+      // No connection pool. Node keys pooled sockets by hostname, not address,
+      // so a request meant for one server could reuse a socket open to
+      // another; three requests a run do not need reuse anyway.
+      agent: false,
+      // Node asks for every address at once when it may race them; either way,
+      // the answer is the one address this call is for.
+      lookup: (_hostname, options, callback) => {
+        if (options.all) callback(null, [{ address, family: 4 }])
+        else callback(null, address, 4)
+      },
+    }, (response) => {
+      let body = ''
+      response.setEncoding('utf8')
+      response.on('data', (chunk: string) => { body += chunk })
+      response.on('end', () => resolve({ status: response.statusCode ?? 0, body }))
+    })
+    req.on('error', reject)
+    req.end()
   })
-  if (!response.ok) {
+
+interface Source {
+  credentials: Credentials
+  /** The host's addresses, tried in this order. */
+  addresses: string[]
+  transport: Transport
+}
+
+const hostOf = (credentials: Credentials) => `mt-client-api-v1.${credentials.region}.agiliumtrade.ai`
+
+/**
+ * GET from the first front server that will answer.
+ *
+ * The hostname resolves to several servers, and on 2026-09-21 two of the four
+ * behind the London name answered every request — good token or bad — with a
+ * bare nginx 503 while the other two were fine. Which one a resolver lists
+ * first decides whether a machine can reach MetaApi at all, so a 503 or a
+ * refused connection from one address moves on to the next. Any other status
+ * is an answer about the request itself, and is thrown at once.
+ */
+async function get<T>(source: Source, path: string, query = ''): Promise<T> {
+  const host = hostOf(source.credentials)
+  const fullPath = `/users/current/accounts/${source.credentials.accountId}${path}${query}`
+
+  let unavailable: Error | undefined
+  for (const address of source.addresses) {
+    let reply: Reply
+    try {
+      reply = await source.transport(host, address, fullPath, source.credentials.token)
+    } catch (error) {
+      unavailable = new Error(`MetaApi ${address} on ${path}: ${(error as Error).message}`)
+      continue
+    }
+    if (reply.status === 200) return JSON.parse(reply.body) as T
+
     // The body names the cause. From the status alone an expired token, a
     // wrong region and an undeployed account are indistinguishable.
-    const body = (await response.text()).slice(0, 300)
-    throw new Error(`MetaApi ${response.status} on ${path}: ${body}`)
+    const error = new Error(`MetaApi ${reply.status} on ${path} via ${address}: ${reply.body.slice(0, 300)}`)
+    if (reply.status !== 503) throw error
+    unavailable = error
   }
-  return await response.json() as T
+  throw unavailable ?? new Error(`MetaApi: ${host} resolved to no address`)
 }
 
 /** Walk every page. A short page is the only signal that it was the last. */
-async function paged<T>(credentials: Credentials, path: string): Promise<T[]> {
+async function paged<T>(source: Source, path: string): Promise<T[]> {
   const rows: T[] = []
   for (let offset = 0; ; offset += PAGE) {
-    const page = await get<T[]>(credentials, path, `?offset=${offset}&limit=${PAGE}`)
+    const page = await get<T[]>(source, path, `?offset=${offset}&limit=${PAGE}`)
     rows.push(...page)
     if (page.length < PAGE) return rows
   }
@@ -143,12 +208,15 @@ async function paged<T>(credentials: Credentials, path: string): Promise<T[]> {
 export async function fetchFeed(
   credentials: Credentials,
   now: Date = new Date(),
+  transport: Transport = httpsGet,
+  resolve: (host: string) => Promise<string[]> = resolve4,
 ): Promise<RawFeed> {
+  const source: Source = { credentials, addresses: await resolve(hostOf(credentials)), transport }
   const window = `/time/${EPOCH}/${now.toISOString()}`
   const [account, deals, orders] = await Promise.all([
-    get<RawAccount>(credentials, '/accountInformation'),
-    paged<RawDeal>(credentials, `/history-deals${window}`),
-    paged<RawOrder>(credentials, `/history-orders${window}`),
+    get<RawAccount>(source, '/accountInformation'),
+    paged<RawDeal>(source, `/history-deals${window}`),
+    paged<RawOrder>(source, `/history-orders${window}`),
   ])
   return {
     account,
