@@ -1,9 +1,12 @@
 /**
- * Draws the account's growth as one self-contained HTML file.
+ * Draws the journal as one self-contained HTML file.
  *
  * No server, no dependencies — `update.ts` writes `equity.html` and a browser
- * opens it. The running total here is a preview of layer 3 and will move
- * there; the page itself is a placeholder until there is a real UI.
+ * opens it. The one outside request is for type (Newsreader and IBM Plex
+ * Mono from Google Fonts); offline, Georgia and the system monospace stand in. The page is handed the facts of every closed trade and works the
+ * figures out itself: win rate, profit factor, drawdown, the calendar. Nothing
+ * is stored, so nothing can drift from the broker. When layer 3 exists those
+ * sums move there; the page is where they are previewed.
  */
 
 import type { Journal, Trade } from './journal.ts'
@@ -47,21 +50,45 @@ export function equityCurve(trades: Trade[]): EquityPoint[] {
   return points
 }
 
+/** How many decimals a price was quoted to, so an average is not printed to nine. */
+function decimals(price: number): number {
+  return String(price).split('.')[1]?.length ?? 0
+}
+
+/** The facts of one trade the page shows, as plain JSON. */
+function rowOf(trade: Trade) {
+  const volume = trade.exits.reduce((total, exit) => total + exit.volume, 0)
+  const digits = Math.max(decimals(trade.entry.price), ...trade.exits.map((exit) => decimals(exit.price)))
+  // A position closed in pieces has one reason per piece; the one that closed
+  // the most of it is the one the trade is filed under.
+  const largest = trade.exits.reduce((best, exit) => exit.volume > best.volume ? exit : best)
+  return {
+    symbol: trade.symbol,
+    side: trade.side,
+    tag: trade.tag,
+    opened: trade.entry.time.getTime(),
+    volume: trade.entry.volume,
+    entry: trade.entry.price,
+    exit: Number((trade.exits.reduce((total, exit) => total + exit.price * exit.volume, 0) / volume).toFixed(digits)),
+    ended: largest.reason.kind,
+    /** The stop in force at the close, else the one placed at entry; null if there was never one. */
+    stop: trade.stop.final ?? trade.stop.initial,
+    net: netOf(trade),
+    costs: trade.commission + trade.swap,
+  }
+}
+
 /** Everything the page needs, as plain JSON. */
-function pageData({ account, balance, deposited, trades }: Journal) {
+function pageData({ account, balance, deposited, serverUtcOffsetMinutes, trades }: Journal) {
   return {
     account,
     deposited,
     balance,
-    wins: trades.filter((trade) => netOf(trade) > 0).length,
+    serverUtcOffsetMinutes,
     points: equityCurve(trades).map((point) => ({
       time: point.time.getTime(),
       equity: point.equity,
-      trade: point.trade && {
-        symbol: point.trade.symbol,
-        side: point.trade.side,
-        net: netOf(point.trade),
-      },
+      trade: point.trade && rowOf(point.trade),
     })),
   }
 }
@@ -69,7 +96,8 @@ function pageData({ account, balance, deposited, trades }: Journal) {
 export function renderPage(journal: Journal): string {
   // `<` in a JSON string would end the script tag early; escape it defensively.
   const json = JSON.stringify(pageData(journal)).replaceAll('<', '\\u003c')
-  return TEMPLATE.replace('__DATA__', json)
+  // A function, so a `$` in a tag is not read as a replacement pattern.
+  return TEMPLATE.replace('__DATA__', () => json)
 }
 
 const TEMPLATE = /* html */ `<!doctype html>
@@ -77,99 +105,110 @@ const TEMPLATE = /* html */ `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Account growth</title>
+<title>Journal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Newsreader:ital,opsz,wght@0,6..72,500;1,6..72,500&display=swap">
 <style>
+  /* One committed dark theme: warm near-black ground, hairlines, mono for
+     every figure, serif for the one number the page leads with. Sage is the only
+     accent; jade and coral mean profit and loss and nothing else. */
   :root {
-    color-scheme: light;
-    --page: #f4f5f7;
-    --surface: #ffffff;
-    --surface-2: #f7f8fa;
-    --ink: #0f1115;
-    --ink-2: #5b606b;
-    --muted: #8b909b;
-    --grid: #eceef2;
-    --axis: #d3d6dc;
-    --border: rgba(15, 17, 21, 0.07);
-    --shadow: 0 1px 2px rgba(15, 17, 21, 0.04), 0 12px 32px -16px rgba(15, 17, 21, 0.18);
-    --series: #2a78d6;
-    --series-soft: rgba(42, 120, 214, 0.10);
-    --up: #0c8a3f;
-    --up-soft: rgba(12, 138, 63, 0.10);
-    --down: #d13b3b;
-    --down-soft: rgba(209, 59, 59, 0.10);
-    --glass: rgba(255, 255, 255, 0.82);
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      color-scheme: dark;
-      --page: #0b0c0f;
-      --surface: #15171b;
-      --surface-2: #1b1e23;
-      --ink: #f3f4f6;
-      --ink-2: #a7acb6;
-      --muted: #737882;
-      --grid: #23262c;
-      --axis: #34383f;
-      --border: rgba(255, 255, 255, 0.07);
-      --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 16px 40px -20px rgba(0, 0, 0, 0.6);
-      --series: #4f95ec;
-      --series-soft: rgba(79, 149, 236, 0.14);
-      --up: #3ccf6d;
-      --up-soft: rgba(60, 207, 109, 0.12);
-      --down: #f06565;
-      --down-soft: rgba(240, 101, 101, 0.12);
-      --glass: rgba(21, 23, 27, 0.82);
-    }
+    color-scheme: dark;
+    --void: #0b0a09;
+    --void-2: #080807;
+    --surface: #121110;
+    --surface-2: #1a1816;
+    --ink: #f3efe8;
+    --body: #cfc8bd;
+    --dim: #9a938a;
+    --faint: #6b655d;
+    --hair: rgba(235, 220, 200, 0.12);
+    --hair-2: rgba(235, 220, 200, 0.26);
+    --gridline: rgba(235, 220, 200, 0.045);
+    --accent: #bcd18f;
+    --accent-hi: #dcecb2;
+    --accent-ghost: rgba(188, 209, 143, 0.13);
+    --accent-ink: #13160c;
+    --series: var(--accent);
+    --up: #45d68e;
+    --up-ghost: rgba(69, 214, 142, 0.14);
+    --down: #f56e5e;
+    --down-ghost: rgba(245, 110, 94, 0.14);
+    --warn: #f7b345;
+    --cat-stop: #5b8def;
+    --cat-target: #22c1c3;
+    --serif: 'Newsreader', Georgia, 'Times New Roman', serif;
+    --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   }
   * { box-sizing: border-box; }
-  html { background: var(--page); }
+  html { background: var(--void); scrollbar-color: var(--surface-2) var(--void); }
   body {
     margin: 0;
-    padding: 40px 20px 64px;
-    background:
-      radial-gradient(900px 420px at 15% -10%, var(--series-soft), transparent 70%),
-      var(--page);
-    color: var(--ink);
-    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 28px 24px 72px;
+    min-height: 100vh;
+    background: var(--void);
+    color: var(--body);
+    font: 400 13px/1.5 var(--mono);
+    font-variant-numeric: tabular-nums;
     -webkit-font-smoothing: antialiased;
   }
-  main { max-width: 980px; margin: 0 auto; }
-
-  header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 24px; }
-  h1 { font-size: 22px; font-weight: 650; letter-spacing: -0.02em; margin: 0; }
-  .pill { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; letter-spacing: 0.02em; background: var(--surface-2); color: var(--ink-2); border: 1px solid var(--border); vertical-align: middle; margin-left: 10px; }
-  .sub { color: var(--ink-2); margin: 0; font-size: 13px; }
-
-  .tiles { display: grid; grid-template-columns: repeat(12, 1fr); gap: 14px; margin-bottom: 14px; }
-  .tile { grid-column: span 4; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 18px 20px; box-shadow: var(--shadow); min-width: 0; }
-  .tile.hero { grid-column: span 12; display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
-  @media (min-width: 720px) {
-    .tile.hero { grid-column: span 6; }
-    .tile { grid-column: span 2; }
+  /* A faint grid behind everything, fading out down the page. */
+  body::before {
+    content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+    background-image:
+      linear-gradient(var(--gridline) 1px, transparent 1px),
+      linear-gradient(90deg, var(--gridline) 1px, transparent 1px);
+    background-size: 44px 44px;
+    -webkit-mask-image: radial-gradient(ellipse 120% 90% at 50% 0%, #000 30%, transparent 78%);
+    mask-image: radial-gradient(ellipse 120% 90% at 50% 0%, #000 30%, transparent 78%);
   }
-  .tile .label { color: var(--ink-2); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
-  .tile .value { font-size: 22px; font-weight: 650; letter-spacing: -0.02em; margin-top: 6px; line-height: 1.1; }
-  .tile.hero .value { font-size: 44px; }
-  .tile .note { color: var(--muted); font-size: 12px; margin-top: 6px; }
-  .delta { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
-  .delta.up { background: var(--up-soft); color: var(--up); }
-  .delta.down { background: var(--down-soft); color: var(--down); }
-  .delta.flat { background: var(--surface-2); color: var(--ink-2); }
-  .value.up { color: var(--up); }
-  .value.down { color: var(--down); }
+  main { max-width: 1120px; margin: 0 auto; }
 
-  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 20px 16px 12px; position: relative; box-shadow: var(--shadow); overflow: hidden; }
-  .card h2 { font-size: 13px; font-weight: 600; margin: 0 0 12px 8px; color: var(--ink-2); }
+  header {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 12px 24px; flex-wrap: wrap;
+    padding-bottom: 14px; border-bottom: 1px solid var(--hair); margin-bottom: 28px;
+    font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  }
+  h1 { font: inherit; font-weight: 500; color: var(--ink); margin: 0; white-space: nowrap; }
+  h1::before { content: ''; display: inline-block; width: 6px; height: 6px; background: var(--accent); margin-right: 10px; vertical-align: 1px; }
+  .sub { color: var(--faint); margin: 0; }
+
+  .tiles { display: grid; grid-template-columns: repeat(12, 1fr); gap: 1px; background: var(--hair); border: 1px solid var(--hair); margin-bottom: 16px; }
+  .tile { grid-column: span 6; background: var(--void); padding: 18px 20px; min-width: 0; transition: background 0.25s; }
+  .tile:hover { background: var(--surface); }
+  .tile.hero { grid-column: span 12; display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 26px 26px 22px; }
+  @media (min-width: 720px) { .tile { grid-column: span 4; } }
+  @media (min-width: 1000px) { .tile { grid-column: span 2; } }
+  .label { font-size: 9.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); }
+  .value { font-size: 22px; font-weight: 500; color: var(--ink); margin-top: 10px; line-height: 1.1; letter-spacing: -0.01em; }
+  .hero .value { font-family: var(--serif); font-size: 72px; letter-spacing: -0.02em; line-height: 1; margin-top: 14px; font-variant-numeric: proportional-nums; }
+  .note { color: var(--dim); font-size: 11px; margin-top: 8px; line-height: 1.5; }
+  .up { color: var(--up); }
+  .down { color: var(--down); }
+  .warn { color: var(--warn); }
+  .delta { font-family: var(--serif); font-style: italic; font-weight: 500; font-size: 30px; line-height: 1.1; letter-spacing: -0.01em; margin-top: 8px; color: var(--accent); font-variant-numeric: proportional-nums; }
+  .delta.down { color: var(--down); }
+  .delta.flat { color: var(--dim); }
+  .readout { display: grid; grid-template-columns: auto auto; gap: 7px 20px; margin: 0; font-size: 11.5px; }
+  .readout dt { font-size: 9.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); align-self: baseline; }
+  .readout dd { margin: 0; color: var(--body); text-align: right; }
+
+  .card { background: var(--void); border: 1px solid var(--hair); padding: 20px 22px 18px; position: relative; }
+  h2 { font-size: 9.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); font-weight: 400; margin: 0 0 16px; }
+  h2::before { content: ''; display: inline-block; width: 5px; height: 5px; background: var(--accent); margin-right: 9px; vertical-align: 1px; }
+  .card.chart { padding: 20px 18px 14px; overflow: hidden; }
+  .card.chart h2 { margin-left: 6px; }
   svg { display: block; width: 100%; height: auto; overflow: visible; touch-action: none; }
-  .grid line { stroke: var(--grid); stroke-width: 1; }
-  .baseline { stroke: var(--axis); stroke-width: 1; }
-  .tick { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
-  .line { fill: none; stroke: var(--series); stroke-width: 2.25; stroke-linejoin: round; stroke-linecap: round; }
-  .end { fill: var(--series); stroke: var(--surface); stroke-width: 2.5; }
-  .halo { fill: var(--series); opacity: 0.18; }
-  .end-label { fill: var(--ink); font-size: 12px; font-weight: 650; }
-  .crosshair { stroke: var(--axis); stroke-width: 1; display: none; }
-  .focus { fill: var(--series); stroke: var(--surface); stroke-width: 2.5; display: none; }
+  .grid line { stroke: var(--hair); stroke-width: 1; }
+  .baseline { stroke: var(--hair-2); stroke-width: 1; }
+  .tick { fill: var(--faint); font-size: 10px; font-family: var(--mono); letter-spacing: 0.04em; }
+  .line { fill: none; stroke: var(--accent); stroke-width: 1.75; stroke-linejoin: round; stroke-linecap: round; }
+  .end { fill: var(--accent); stroke: var(--void); stroke-width: 2; }
+  .halo { fill: var(--accent); opacity: 0.18; }
+  .end-label { fill: var(--ink); font-size: 11.5px; font-family: var(--mono); font-weight: 500; }
+  .crosshair { stroke: var(--hair-2); stroke-width: 1; stroke-dasharray: 3 3; display: none; }
+  .focus { fill: var(--accent); stroke: var(--void); stroke-width: 2; display: none; }
   @media (prefers-reduced-motion: no-preference) {
     .line.draw { stroke-dasharray: var(--length); stroke-dashoffset: var(--length); animation: draw 1.1s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
     .area.draw { opacity: 0; animation: fade 0.6s 0.7s ease-out forwards; }
@@ -179,100 +218,237 @@ const TEMPLATE = /* html */ `<!doctype html>
   @keyframes fade { to { opacity: 1; } }
   .halo.draw { animation-name: fadeHalo; }
   @keyframes fadeHalo { to { opacity: 0.18; } }
+  .empty { color: var(--faint); font-size: 11px; padding: 20px 0; }
 
   .tooltip {
     position: absolute; pointer-events: none; display: none; z-index: 2;
-    background: var(--glass); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-    border: 1px solid var(--border); border-radius: 12px;
-    padding: 10px 12px; box-shadow: var(--shadow); white-space: nowrap;
+    background: var(--surface); border: 1px solid var(--hair-2);
+    padding: 10px 12px; box-shadow: 0 16px 40px -14px rgba(0, 0, 0, 0.8); white-space: nowrap;
   }
-  .tooltip b { display: block; font-size: 16px; font-weight: 650; letter-spacing: -0.01em; }
-  .tooltip span { color: var(--ink-2); font-size: 12px; }
-  .tooltip .net { font-weight: 600; }
-  .tooltip .net.up { color: var(--up); }
-  .tooltip .net.down { color: var(--down); }
+  .tooltip b { display: block; font-size: 15px; font-weight: 500; color: var(--ink); }
+  .tooltip span { color: var(--dim); font-size: 11px; }
+  .tooltip .net { font-weight: 500; }
 
-  details { margin-top: 14px; }
-  summary { cursor: pointer; color: var(--ink-2); font-size: 13px; font-weight: 500; list-style: none; display: flex; align-items: center; gap: 8px; padding: 6px 8px; }
-  summary::-webkit-details-marker { display: none; }
-  summary::before { content: ''; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform 0.15s; }
-  details[open] summary::before { transform: rotate(45deg); }
-  .table-card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; box-shadow: var(--shadow); overflow: auto; margin-top: 8px; }
-  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-  th, td { text-align: left; padding: 10px 16px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
-  tr:last-child td { border-bottom: 0; }
-  th { color: var(--ink-2); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; background: var(--surface-2); }
+  .split { display: grid; grid-template-columns: 1fr; gap: 16px; margin-top: 16px; align-items: start; }
+  @media (min-width: 900px) { .split { grid-template-columns: 3fr 2fr; } }
+  .habits { grid-template-columns: 1fr 1fr; margin: 0; }
+  .habits .tile { grid-column: auto; }
+  .habits .tile.wide { grid-column: span 2; }
+  @media (max-width: 640px) { .habits { grid-template-columns: 1fr; } .habits .tile.wide { grid-column: auto; } }
+  .pair { display: flex; gap: 28px; }
+  .pair > div { min-width: 0; }
+  .pair .note { margin-top: 4px; }
+
+  .month { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin: 0 0 12px; }
+  .month + .cal { margin-bottom: 22px; }
+  .month h3 { font-family: var(--serif); font-weight: 500; font-size: 24px; color: var(--ink); margin: 0; letter-spacing: -0.01em; }
+  .month span { color: var(--dim); font-size: 11px; }
+  .cal { display: grid; grid-template-columns: repeat(7, 1fr) 1.2fr; gap: 1px; background: var(--hair); border: 1px solid var(--hair); }
+  .cal-head { background: var(--void); font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); text-align: center; padding: 8px 0; }
+  .cal-cell { min-height: 64px; padding: 7px 9px; display: flex; flex-direction: column; justify-content: space-between; background: var(--void); font-size: 11.5px; line-height: 1.3; min-width: 0; }
+  .cal-cell.blank { background: var(--void-2); }
+  .cal-cell.up { background: var(--up-ghost); }
+  .cal-cell.down { background: var(--down-ghost); }
+  .cal-cell.week { background: var(--surface); }
+  .cal-d { color: var(--faint); font-size: 10px; }
+  .cal-n { font-weight: 500; color: var(--ink); white-space: nowrap; }
+  .up .cal-n { color: var(--up); }
+  .down .cal-n { color: var(--down); }
+  .cal-c { color: var(--dim); font-size: 10px; white-space: nowrap; }
+  @media (max-width: 640px) {
+    .cal-c { display: none; }
+    .cal-cell { min-height: 48px; padding: 5px 5px; }
+    .cal-n { font-size: 10.5px; }
+  }
+
+  .bar { display: flex; gap: 2px; height: 8px; margin: 14px 0; }
+  .seg { min-width: 3px; }
+  .seg.manual { background: var(--accent); }
+  .seg.stop { background: var(--cat-stop); }
+  .seg.target { background: var(--cat-target); }
+  .legend { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; font-size: 11px; color: var(--dim); }
+  .legend li { display: flex; align-items: center; gap: 9px; }
+  .legend i { width: 8px; height: 8px; flex: none; }
+  .legend b { color: var(--ink); font-weight: 500; }
+  .legend .net { margin-left: auto; font-weight: 500; }
+
+  .table-card { margin-top: 16px; padding: 20px 0 0; }
+  .table-card h2 { margin-left: 22px; }
+  .scroll { overflow: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { text-align: left; padding: 9px 14px; border-top: 1px solid var(--hair); white-space: nowrap; }
+  th:first-child, td:first-child { padding-left: 22px; }
+  th:last-child, td:last-child { padding-right: 22px; }
+  th { font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); font-weight: 400; background: var(--surface); }
+  td { color: var(--body); }
+  tbody tr:hover td { background: var(--surface); }
   td.num, th.num { text-align: right; }
-  td.up { color: var(--up); font-weight: 600; }
-  td.down { color: var(--down); font-weight: 600; }
-  .side { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; background: var(--surface-2); border: 1px solid var(--border); text-transform: uppercase; letter-spacing: 0.04em; }
+  td.up { color: var(--up); font-weight: 500; }
+  td.down { color: var(--down); font-weight: 500; }
+  td.none { color: var(--warn); }
+  .side { display: inline-block; padding: 3px 7px; font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase; border: 1px solid var(--hair-2); color: var(--dim); }
+  .tag { display: inline-block; margin-left: 8px; padding: 2px 6px; font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; background: var(--accent-ghost); color: var(--accent-hi); vertical-align: 1px; }
 </style>
 </head>
 <body>
 <main>
   <header>
-    <h1>Account growth<span class="pill">preview</span></h1>
-    <p class="sub" id="sub"></p>
+    <div>
+      <h1>Journal</h1>
+      <p class="sub" id="sub"></p>
+    </div>
   </header>
-  <div class="tiles" id="tiles"></div>
-  <div class="card">
+  <section class="tiles" id="tiles"></section>
+  <section class="card chart">
     <h2>Net P&amp;L, cumulative by trade</h2>
     <svg id="chart" viewBox="0 0 880 320" role="img" aria-label="Net profit and loss over time"></svg>
     <div class="tooltip" id="tooltip"></div>
-  </div>
-  <details>
-    <summary>Every trade, as a table</summary>
-    <div class="table-card"><table id="table"></table></div>
-  </details>
+  </section>
+  <section class="split">
+    <div class="card">
+      <h2>By day</h2>
+      <div id="calendar"></div>
+    </div>
+    <div class="tiles habits" id="habits"></div>
+  </section>
+  <section class="card table-card">
+    <h2>Every trade, newest first</h2>
+    <div class="scroll"><table id="table"></table></div>
+  </section>
 </main>
 <script>
 const data = __DATA__
 
-const money = new Intl.NumberFormat('en-AU', { style: 'currency', currency: data.account.currency })
-const whole = new Intl.NumberFormat('en-AU', { style: 'currency', currency: data.account.currency, maximumFractionDigits: 0 })
-const signed = (n) => (n > 0 ? '+' : '') + money.format(n)
+// Formatting.
+const currency = data.account.currency
+const money = new Intl.NumberFormat('en-AU', { style: 'currency', currency })
+const whole = new Intl.NumberFormat('en-AU', { style: 'currency', currency, maximumFractionDigits: 0 })
+const price = new Intl.NumberFormat('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 5 })
+const signed = (n, format = money) => (n > 0 ? '+' : '') + format.format(n)
 const tone = (n) => (n > 0 ? 'up' : n < 0 ? 'down' : 'flat')
+const fixed = (n) => (n === null ? '—' : n.toFixed(2))
+const plural = (n, one, many = one + 's') => n + ' ' + (n === 1 ? one : many)
 const day = (ms) => new Date(ms).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', timeZone: 'UTC' })
 const when = (ms) => new Date(ms).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })
+const dateOf = (ms) => new Date(ms).toISOString().slice(0, 10)
+const duration = (ms) => {
+  const m = ms / 60000
+  return m < 60 ? Math.round(m) + ' min' : m < 1440 ? (m / 60).toFixed(1) + ' h' : (m / 1440).toFixed(1) + ' d'
+}
+const utc = (m) => m === null ? '' : 'UTC' + (m < 0 ? '−' : '+') + Math.floor(Math.abs(m) / 60) +
+  (Math.abs(m) % 60 ? ':' + String(Math.abs(m) % 60).padStart(2, '0') : '')
 
-const points = data.points
-const trades = points.filter((p) => p.trade)
-const net = points.length ? points[points.length - 1].equity : 0
-const first = points[0], last = points[points.length - 1]
-
-document.getElementById('sub').textContent =
-  data.account.id + ' · ' + data.account.broker + ' · ' + data.account.currency +
-  (points.length ? ' · ' + day(first.time) + ' – ' + day(last.time) + ' (server time)' : '')
-
-// Stat tiles: the hero number is net P&L, the rest give it scale.
 const h = (tag, className, text) => {
   const node = document.createElement(tag)
   if (className) node.className = className
   if (text !== undefined) node.textContent = text
   return node
 }
-const tiles = document.getElementById('tiles')
 
+// The figures, all worked out from the trades on the page.
+const points = data.points
+const first = points[0], last = points[points.length - 1]
+const trades = points.filter((p) => p.trade)
+const sum = (list, pick) => list.reduce((total, item) => total + pick(item), 0)
+const netOf = (p) => p.trade.net
+const ratio = (a, b) => (b === 0 ? null : a / b)
+const median = (values) => {
+  if (values.length === 0) return null
+  const sorted = [...values].sort((a, b) => a - b)
+  const middle = sorted.length >> 1
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2
+}
+
+const winners = trades.filter((p) => p.trade.net > 0)
+const losers = trades.filter((p) => p.trade.net < 0)
+const net = sum(trades, netOf)
+const costs = sum(trades, (p) => p.trade.costs)
+const won = sum(winners, netOf), lost = -sum(losers, netOf)
+const winRate = ratio(winners.length, trades.length)
+const profitFactor = ratio(won, lost)
+const avgWin = ratio(won, winners.length), avgLoss = ratio(lost, losers.length)
+const payoff = avgWin !== null && avgLoss !== null ? ratio(avgWin, avgLoss) : null
+const expectancy = ratio(net, trades.length)
+
+const days = [...Map.groupBy(trades, (p) => dateOf(p.time))]
+  .map(([date, list]) => ({ date, net: sum(list, netOf), count: list.length }))
+  .sort((a, b) => a.date.localeCompare(b.date))
+const greenDays = days.filter((d) => d.net > 0).length
+
+// Deepest fall from a high on the curve, which starts at zero.
+let peak = 0, peakAt = first ? first.time : 0
+let drawdown = { amount: 0, from: peakAt, to: peakAt }
+for (const p of points) {
+  if (p.equity > peak) { peak = p.equity; peakAt = p.time }
+  if (peak - p.equity > drawdown.amount) drawdown = { amount: peak - p.equity, from: peakAt, to: p.time }
+}
+
+let streak = null, longestWin = 0, longestLoss = 0
+for (const p of trades) {
+  const kind = p.trade.net > 0 ? 'win' : p.trade.net < 0 ? 'loss' : null
+  if (kind === null) { streak = null; continue }
+  streak = streak && streak.kind === kind ? { kind, length: streak.length + 1 } : { kind, length: 1 }
+  if (kind === 'win') longestWin = Math.max(longestWin, streak.length)
+  else longestLoss = Math.max(longestLoss, streak.length)
+}
+
+const hold = (p) => p.time - p.trade.opened
+
+// Header.
+document.getElementById('sub').textContent = [
+  data.account.id, data.account.broker, currency,
+  trades.length ? day(first.time) + ' – ' + day(last.time) + ' · server time ' + utc(data.serverUtcOffsetMinutes) : 'no closed trades yet',
+].join(' · ')
+
+// Hero: net P&L, with what gives it scale.
+const tiles = document.getElementById('tiles')
 const hero = h('div', 'tile hero')
 const heroText = h('div')
-heroText.append(h('div', 'label', 'Net P&L'), h('div', 'value ' + tone(net), signed(net)))
-hero.append(heroText)
+heroText.append(h('div', 'label', 'Net P&L'), h('div', 'value', signed(net)))
 if (data.deposited > 0) {
   const pct = 100 * net / data.deposited
-  hero.append(h('div', 'delta ' + tone(net), (pct > 0 ? '+' : '') + pct.toFixed(2) + '% on deposits'))
+  heroText.append(h('div', 'delta ' + tone(net), (pct > 0 ? '+' : '') + pct.toFixed(2) + '% on ' + whole.format(data.deposited) + ' deposited'))
 }
+hero.append(heroText)
+const readout = h('dl', 'readout')
+for (const [key, text] of [
+  ['Trades', trades.length + ' over ' + plural(days.length, 'day')],
+  ['Gross', signed(net - costs)],
+  ['Costs', signed(costs)],
+  ['Balance', money.format(data.balance)],
+]) readout.append(h('dt', '', key), h('dd', '', text))
+hero.append(readout)
 tiles.append(hero)
 
-for (const [label, value, note] of [
-  ['Deposited', money.format(data.deposited), null],
-  ['Balance', money.format(data.balance), null],
-  ['Trades', String(trades.length), trades.length ? Math.round(100 * data.wins / trades.length) + '% won' : null],
-]) {
-  const tile = h('div', 'tile')
-  tile.append(h('div', 'label', label), h('div', 'value', value))
-  if (note) tile.append(h('div', 'note', note))
-  tiles.append(tile)
+// Six figures, each with the plain-words version underneath.
+const tile = (label, value, valueTone, note) => {
+  const node = h('div', 'tile')
+  node.append(h('div', 'label', label), h('div', 'value ' + valueTone, value), h('div', 'note', note))
+  return node
 }
+for (const [label, value, valueTone, note] of [
+  ['Win rate',
+    winRate === null ? '—' : Math.round(100 * winRate) + '%', 'flat',
+    plural(winners.length, 'win') + ' of ' + plural(trades.length, 'trade') + ' · ' + greenDays + ' of ' + plural(days.length, 'day') + ' green'],
+  ['Profit factor',
+    fixed(profitFactor), profitFactor === null ? 'flat' : tone(profitFactor - 1),
+    profitFactor === null ? 'needs a win and a loss' : whole.format(won) + ' won for ' + whole.format(lost) + ' lost'],
+  ['Avg win / loss',
+    fixed(payoff), payoff === null ? 'flat' : tone(payoff - 1),
+    payoff === null ? 'needs a win and a loss' : signed(avgWin) + ' against ' + signed(-avgLoss)],
+  ['Expectancy',
+    expectancy === null ? '—' : signed(expectancy), expectancy === null ? 'flat' : tone(expectancy),
+    'per trade, after costs'],
+  ['Max drawdown',
+    drawdown.amount ? '−' + money.format(drawdown.amount) : money.format(0), drawdown.amount ? 'down' : 'flat',
+    drawdown.amount
+      ? (data.deposited > 0 ? (100 * drawdown.amount / data.deposited).toFixed(2) + '% of deposits · ' : '') + day(drawdown.from) + ' – ' + day(drawdown.to)
+      : 'no high given back yet'],
+  ['Streak',
+    streak ? plural(streak.length, streak.kind, streak.kind === 'win' ? 'wins' : 'losses') : '—',
+    streak ? (streak.kind === 'win' ? 'up' : 'down') : 'flat',
+    'longest run: ' + plural(longestWin, 'win') + ', ' + plural(longestLoss, 'loss', 'losses')],
+]) tiles.append(tile(label, value, valueTone, note))
 
 // The chart: cumulative net P&L against time, one point per closed trade.
 const W = 880, H = 320, M = { top: 16, right: 96, bottom: 32, left: 64 }
@@ -309,9 +485,9 @@ if (points.length > 1) {
   }
   el('line', { class: 'baseline', x1: M.left, x2: W - M.right, y1: y(0), y2: y(0) })
 
-  const days = Math.max(1, Math.round((t1 - t0) / 86400000))
-  const every = Math.ceil(days / 6)
-  for (let d = 0; d <= days; d += every) {
+  const dayCount = Math.max(1, Math.round((t1 - t0) / 86400000))
+  const every = Math.ceil(dayCount / 6)
+  for (let d = 0; d <= dayCount; d += every) {
     const t = t0 + d * 86400000
     el('text', { class: 'tick', x: x(t), y: H - M.bottom + 20, 'text-anchor': 'middle' }).textContent = day(t)
   }
@@ -367,6 +543,8 @@ if (points.length > 1) {
     show(nearest)
   })
   svg.addEventListener('pointerleave', hide)
+} else {
+  svg.replaceWith(h('div', 'empty', 'The curve starts with the first closed trade.'))
 }
 
 function niceStep(rough) {
@@ -376,20 +554,139 @@ function niceStep(rough) {
   return (unit < 1.5 ? 1 : unit < 3.5 ? 2 : unit < 7.5 ? 5 : 10) * power
 }
 
-// The table: the same numbers with no hovering required.
+// The calendar: one grid per month, Monday first, each week totalled on the right.
+const calendar = document.getElementById('calendar')
+if (days.length === 0) {
+  calendar.append(h('div', 'empty', 'Days fill in as trades close.'))
+} else {
+  const byDate = new Map(days.map((d) => [d.date, d]))
+  const dayCell = (d) => {
+    const cell = h('div', 'cal-cell ' + (d ? tone(d.net) : 'idle'))
+    if (d) {
+      cell.append(h('span', 'cal-n', signed(d.net, whole)), h('span', 'cal-c', plural(d.count, 'trade')))
+    }
+    return cell
+  }
+  const weekCell = (week) => {
+    const cell = h('div', 'cal-cell week ' + (week.count ? tone(week.net) : 'idle'))
+    if (week.count) cell.append(h('span', 'cal-n', signed(week.net, whole)), h('span', 'cal-c', plural(week.count, 'trade')))
+    return cell
+  }
+
+  const start = new Date(days[0].date), end = new Date(days[days.length - 1].date)
+  for (let cursor = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
+       cursor <= end;
+       cursor = new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, 1))) {
+    const year = cursor.getUTCFullYear(), month = cursor.getUTCMonth()
+    const inMonth = days.filter((d) => d.date.startsWith(cursor.toISOString().slice(0, 7)))
+
+    const heading = h('div', 'month')
+    heading.append(h('h3', '', cursor.toLocaleDateString('en-AU', { month: 'long', year: 'numeric', timeZone: 'UTC' })))
+    heading.append(h('span', '', signed(sum(inMonth, (d) => d.net)) + ' · ' + plural(sum(inMonth, (d) => d.count), 'trade') + ' · ' +
+      inMonth.filter((d) => d.net > 0).length + ' of ' + plural(inMonth.length, 'day') + ' green'))
+    calendar.append(heading)
+
+    const grid = h('div', 'cal')
+    for (const name of ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun', 'Week']) grid.append(h('div', 'cal-head', name))
+
+    const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate()
+    let column = (cursor.getUTCDay() + 6) % 7
+    let week = { net: 0, count: 0 }
+    for (let i = 0; i < column; i++) grid.append(h('div', 'cal-cell blank'))
+    for (let date = 1; date <= daysInMonth; date++) {
+      const d = byDate.get(dateOf(Date.UTC(year, month, date)))
+      const cell = dayCell(d)
+      cell.prepend(h('span', 'cal-d', String(date)))
+      grid.append(cell)
+      if (d) { week.net += d.net; week.count += d.count }
+      if (++column === 7) { grid.append(weekCell(week)); week = { net: 0, count: 0 }; column = 0 }
+    }
+    if (column > 0) {
+      for (; column < 7; column++) grid.append(h('div', 'cal-cell blank'))
+      grid.append(weekCell(week))
+    }
+    calendar.append(grid)
+  }
+}
+
+// Habits: what the broker's own fields say about how the trades were run.
+const habits = document.getElementById('habits')
+const bucket = (list) => ({ count: list.length, net: sum(list, netOf), wins: list.filter((p) => p.trade.net > 0).length })
+const pair = (label, a, b) => {
+  const node = h('div', 'tile')
+  node.append(h('div', 'label', label))
+  const row = h('div', 'pair')
+  for (const [value, valueTone, note] of [a, b]) {
+    const cell = h('div')
+    cell.append(h('div', 'value ' + valueTone, value), h('div', 'note', note))
+    row.append(cell)
+  }
+  node.append(row)
+  return node
+}
+
+const ended = { manual: 'By hand', stop: 'Stop', target: 'Target' }
+const exits = h('div', 'tile wide')
+exits.append(h('div', 'label', 'How trades ended'))
+const bar = h('div', 'bar'), legend = h('ul', 'legend')
+for (const kind of ['manual', 'stop', 'target']) {
+  const b = bucket(trades.filter((p) => p.trade.ended === kind))
+  if (b.count === 0) continue
+  const seg = h('span', 'seg ' + kind)
+  seg.style.flex = String(b.count)
+  bar.append(seg)
+  const item = h('li')
+  item.append(h('i', 'seg ' + kind), h('b', '', ended[kind]), h('span', '', plural(b.count, 'trade') + ', ' + plural(b.wins, 'win')))
+  item.append(h('span', 'net ' + tone(b.net), signed(b.net)))
+  legend.append(item)
+}
+exits.append(bar, legend)
+if (trades.length === 0) exits.append(h('div', 'note', 'Fills in as trades close.'))
+habits.append(exits)
+
+const naked = bucket(trades.filter((p) => p.trade.stop === null))
+const covered = bucket(trades.filter((p) => p.trade.stop !== null))
+habits.append(pair('Stop in place',
+  [String(covered.count), 'flat', 'with a stop · ' + signed(covered.net)],
+  [String(naked.count), naked.count ? 'warn' : 'flat', 'without · ' + signed(naked.net)]))
+
+habits.append(pair('Hold time, median',
+  [winners.length ? duration(median(winners.map(hold))) : '—', 'flat', 'winners'],
+  [losers.length ? duration(median(losers.map(hold))) : '—', 'flat', 'losers']))
+
+const longs = bucket(trades.filter((p) => p.trade.side === 'buy'))
+const shorts = bucket(trades.filter((p) => p.trade.side === 'sell'))
+const sides = pair('Long / short',
+  [signed(longs.net, whole), tone(longs.net), plural(longs.count, 'long') + ', ' + plural(longs.wins, 'win')],
+  [signed(shorts.net, whole), tone(shorts.net), plural(shorts.count, 'short') + ', ' + plural(shorts.wins, 'win')])
+sides.classList.add('wide')
+habits.append(sides)
+
+// The table: every fact the page used, with no hovering required.
 const table = document.getElementById('table')
 const head = table.createTHead().insertRow()
-for (const [text, num] of [['Closed', 0], ['Symbol', 0], ['Side', 0], ['Net', 1], ['Running', 1]]) {
+for (const [text, num] of [['Closed', 0], ['Symbol', 0], ['Side', 0], ['Lots', 1], ['Entry', 1], ['Exit', 1], ['Held', 1], ['Ended', 0], ['Stop', 1], ['Net', 1]]) {
   head.append(h('th', num ? 'num' : '', text))
 }
 const body = table.createTBody()
-for (const p of trades) {
+for (const p of [...trades].reverse()) {
+  const t = p.trade
   const row = body.insertRow()
   row.insertCell().textContent = when(p.time)
-  row.insertCell().textContent = p.trade.symbol
-  row.insertCell().append(h('span', 'side', p.trade.side))
-  row.append(h('td', 'num ' + tone(p.trade.net), signed(p.trade.net)))
-  row.append(h('td', 'num', signed(p.equity)))
+  const symbol = row.insertCell()
+  symbol.textContent = t.symbol
+  if (t.tag) symbol.append(h('span', 'tag', t.tag))
+  row.insertCell().append(h('span', 'side', t.side))
+  row.append(h('td', 'num', String(t.volume)))
+  row.append(h('td', 'num', price.format(t.entry)))
+  row.append(h('td', 'num', price.format(t.exit)))
+  row.append(h('td', 'num', duration(hold(p))))
+  row.insertCell().textContent = ended[t.ended]
+  row.append(t.stop === null ? h('td', 'num none', 'none') : h('td', 'num', price.format(t.stop)))
+  row.append(h('td', 'num ' + tone(t.net), signed(t.net)))
+}
+if (trades.length === 0) {
+  body.insertRow().insertCell().textContent = 'No closed trades yet.'
 }
 </script>
 </body>
