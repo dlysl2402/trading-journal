@@ -16,10 +16,13 @@ signs in to Supabase, reads this record in the browser, groups the deals into
 round trips and works every figure out from them. It never talks to MetaApi and
 never writes a broker row.
 
-It does write one table: `annotations`, the notes and tags you put against a
-trade. That is the only row in Supabase neither the broker nor this job
-authored, which is why it is the only one with columns of its own and the only
-one a signed-in user is allowed to change.
+It does write two tables: `annotations`, the note, grade and tags you put
+against a trade, and `tags`, the vocabulary those tags are chosen from. Those
+are the only rows in Supabase neither the broker nor this job authored, which
+is why they are the only ones with columns of their own and the only ones a
+signed-in user is allowed to change. A project that ran `schema.sql` before
+those tables existed brings itself up to date with
+`supabase/2026-09-21-tags-and-grade.sql`.
 
 ```
 MetaApi ──▶ trading-journal ──▶ Supabase ──▶ trading-journal-frontend
