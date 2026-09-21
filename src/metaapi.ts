@@ -140,6 +140,7 @@ const httpsGet: Transport = (host, address, path, token) =>
       response.on('data', (chunk: string) => { body += chunk })
       response.on('end', () => resolve({ status: response.statusCode ?? 0, body }))
     })
+    req.on('timeout', () => req.destroy(new Error('no answer within 20s')))
     req.on('error', reject)
     req.end()
   })
