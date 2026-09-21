@@ -16,6 +16,11 @@ signs in to Supabase, reads this record in the browser, groups the deals into
 round trips and works every figure out from them. It never talks to MetaApi and
 never writes a broker row.
 
+It does write one table: `annotations`, the notes and tags you put against a
+trade. That is the only row in Supabase neither the broker nor this job
+authored, which is why it is the only one with columns of its own and the only
+one a signed-in user is allowed to change.
+
 ```
 MetaApi ──▶ trading-journal ──▶ Supabase ──▶ trading-journal-frontend
             (fetch, append)     (the record) (read, rebuild, draw)
