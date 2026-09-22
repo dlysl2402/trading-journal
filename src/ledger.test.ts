@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { merge } from './ledger.ts'
-import { withoutFetchTimeFields } from './metaapi.ts'
+import { withoutUnsettledFields } from './metaapi.ts'
 import type { RawDeal, RawOrder } from './metaapi.ts'
 
 function deal(id: string, over: Partial<RawDeal> = {}): RawDeal {
@@ -58,6 +58,17 @@ test('the exchange rate MetaApi stamps at fetch time is not part of the row', ()
   const stamped = { ...deal('1'), accountCurrencyExchangeRate: 0.71257 } as RawDeal
   const later = { ...deal('1'), accountCurrencyExchangeRate: 0.71255 } as RawDeal
   assert.throws(() => merge(rows([stamped]), rows([later])), /differ/)
-  assert.deepEqual(merge(rows([withoutFetchTimeFields(stamped)]), rows([withoutFetchTimeFields(later)])), rows())
-  assert.deepEqual(withoutFetchTimeFields(stamped), deal('1'))
+  assert.deepEqual(merge(rows([withoutUnsettledFields(stamped)]), rows([withoutUnsettledFields(later)])), rows())
+  assert.deepEqual(withoutUnsettledFields(stamped), deal('1'))
+})
+
+test('the price an order asked for is not part of the row either', () => {
+  // What stopped the record on 2026-09-21: the pass that caught order
+  // 330490870 while the position was still open recorded the working price,
+  // and MetaApi settled the field to 0 once the order was done.
+  const live = { ...order('1'), openPrice: 4352.23 } as RawOrder
+  const settled = { ...order('1'), openPrice: 0 } as RawOrder
+  assert.throws(() => merge(rows([], [live]), rows([], [settled])), /1 order\(s\) on record differ/)
+  assert.deepEqual(
+    merge(rows([], [withoutUnsettledFields(live)]), rows([], [withoutUnsettledFields(settled)])), rows())
 })

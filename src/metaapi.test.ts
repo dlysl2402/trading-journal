@@ -7,6 +7,7 @@ const credentials = { accountId: 'acc', token: 't', region: 'london' }
 const account = { broker: 'B', currency: 'AUD', login: 1, balance: 0, investorMode: true }
 const ok = (body: unknown): Reply => ({ status: 200, body: JSON.stringify(body) })
 const down: Reply = { status: 503, body: '<html>503 Service Temporarily Unavailable</html>' }
+const reconnecting: Reply = { status: 504, body: '{"error":"TimeoutError","message":"not connected to broker yet"}' }
 
 /** A MetaApi whose front servers each behave as told; every request is remembered. */
 function metaapi(fronts: Record<string, Reply | 'refused' | ((path: string) => Reply)>) {
@@ -50,12 +51,26 @@ test('any other status is an answer about the request and is not retried elsewhe
   assert.ok(!api.calls.some((c) => c.startsWith('10.0.0.2 accountInformation')), 'the second address was not asked')
 })
 
-test('the fetch-time exchange rate is dropped from deals and orders', async () => {
+test('what MetaApi restates after the fact is dropped from deals and orders', async () => {
   const api = metaapi({ '10.0.0.1': (path) =>
     path.includes('/accountInformation') ? ok(account)
       : path.includes('/history-deals') ? ok([{ id: '1', accountCurrencyExchangeRate: 0.7 }])
-      : ok([{ id: '2', accountCurrencyExchangeRate: 0.7 }]) })
+      : ok([{ id: '2', accountCurrencyExchangeRate: 0.7, openPrice: 4352.23 }]) })
   const feed = await api.fetch()
   assert.deepEqual(feed.deals, [{ id: '1' }])
   assert.deepEqual(feed.orders, [{ id: '2' }])
+})
+
+test('a 504 is MetaApi reconnecting to the broker, so the list is asked again', async () => {
+  // No address answers during a reconnect, so trying the next one is not the
+  // remedy; asking again a moment later is.
+  const asked = new Set<string>()
+  const api = metaapi({ '10.0.0.1': (path) =>
+    asked.has(path) ? answering(path) : (asked.add(path), reconnecting) })
+  assert.equal((await api.fetch()).account.broker, 'B')
+})
+
+test('a reconnect that does not clear still fails the pass', async () => {
+  const api = metaapi({ '10.0.0.1': reconnecting })
+  await assert.rejects(api.fetch(), /MetaApi 504 on \/accountInformation via 10\.0\.0\.1/)
 })

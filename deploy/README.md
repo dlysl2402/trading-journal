@@ -28,6 +28,15 @@ editor next to what `data/snapshot.json` says. If the broker really did amend
 it, drop the trigger in the SQL editor, fix the row by hand, and recreate the
 trigger from `supabase/schema.sql`. Nothing is ever fixed silently.
 
+There is a fourth cause, and it has happened: MetaApi restating a field that
+was never settled. `openPrice` on an order read as the working price while the
+position was open and as 0 once it closed, so a row recorded mid-trade stopped
+every run that followed for thirteen hours. The answer was not to correct one
+row but to stop recording the field — `UNSETTLED_FIELDS` in `metaapi.ts`, and
+`supabase/2026-09-22-drop-open-price.sql` for the rows already stored. If a
+run names a row that differs in a field nothing reads, suspect this before
+suspecting the broker.
+
 ## On App Platform
 
 `.do/app.yaml` describes the whole app: one scheduled job, every fifteen

@@ -9,19 +9,30 @@
  * and the web app reading the record afterwards — works with plain objects.
  *
  * Nothing here interprets. The shapes below name only the fields the journal
- * reads; the snapshot written each run keeps everything MetaApi sent, with
- * one exception. MetaApi stamps every deal and order with the account
- * currency's exchange rate *as of the fetch*, so the field changes on every
- * pull and says nothing about the deal. It is dropped here, before the row
- * reaches the record, or every row would look amended fifteen minutes later.
+ * reads, and a row is kept as MetaApi sent it save for `UNSETTLED_FIELDS` —
+ * the handful MetaApi restates after the fact, dropped before a row reaches
+ * the record, or an untouched row would look amended fifteen minutes later.
  */
 
-/** Fields that describe the fetch, not the history, so they are not recorded. */
-const FETCH_TIME_FIELDS = ['accountCurrencyExchangeRate']
+/**
+ * What MetaApi says about a row that is not a settled fact of it, and so is
+ * never recorded.
+ *
+ * `accountCurrencyExchangeRate` is the account currency's rate as of the
+ * fetch: it changes on every pull and says nothing about the deal.
+ *
+ * `openPrice` is the price an order *asked* for — 0 on a market order, the
+ * bracket level on an SL or TP fill. While an order is still live MetaApi
+ * serves the working price there instead and settles it afterwards, so a pass
+ * that lands mid-trade records a number the next pass disagrees with. That is
+ * what stopped the record on 2026-09-21. Nothing is lost by dropping it: the
+ * settled value is on the deal already, as `stopLoss` or `takeProfit`.
+ */
+const UNSETTLED_FIELDS = ['accountCurrencyExchangeRate', 'openPrice']
 
-export function withoutFetchTimeFields<T extends object>(row: T): T {
+export function withoutUnsettledFields<T extends object>(row: T): T {
   const copy = { ...row } as Record<string, unknown>
-  for (const field of FETCH_TIME_FIELDS) delete copy[field]
+  for (const field of UNSETTLED_FIELDS) delete copy[field]
   return copy as T
 }
 
@@ -33,6 +44,23 @@ const PAGE = 1000
 
 /** Earlier than any retail account, so a fetch always covers all of history. */
 const EPOCH = '2000-01-01T00:00:00.000Z'
+
+/**
+ * How long a front server gets to answer. Node leaves a socket with no
+ * deadline unless asked, so without this one that accepts the connection and
+ * then says nothing hangs the run for ever — the one failure a timer cannot
+ * report, because there is no exit code to read.
+ */
+const ANSWER_WITHIN = 20_000
+
+/** Statuses that say "not now" rather than anything about the request. */
+const TRANSIENT = new Set([
+  503, // this front server is broken; another may answer
+  504, // MetaApi has not finished reconnecting to the broker; none will
+])
+
+/** Long enough for a broker reconnect to clear before the list is asked again. */
+const RECONNECT_PAUSE = 2_000
 
 export interface Credentials {
   accountId: string
@@ -125,6 +153,8 @@ const httpsGet: Transport = (host, address, path, token) =>
       host,
       path,
       headers: { 'auth-token': token, Accept: 'application/json' },
+      // Arms the 'timeout' listener below. Without it that listener is decoration.
+      timeout: ANSWER_WITHIN,
       // No connection pool. Node keys pooled sockets by hostname, not address,
       // so a request meant for one server could reuse a socket open to
       // another; three requests a run do not need reuse anyway.
@@ -141,7 +171,7 @@ const httpsGet: Transport = (host, address, path, token) =>
       response.on('data', (chunk: string) => { body += chunk })
       response.on('end', () => resolve({ status: response.statusCode ?? 0, body }))
     })
-    req.on('timeout', () => req.destroy(new Error('no answer within 20s')))
+    req.on('timeout', () => req.destroy(new Error(`no answer within ${ANSWER_WITHIN / 1000}s`)))
     req.on('error', reject)
     req.end()
   })
@@ -162,29 +192,38 @@ const hostOf = (credentials: Credentials) => `mt-client-api-v1.${credentials.reg
  * behind the London name answered every request — good token or bad — with a
  * bare nginx 503 while the other two were fine. Which one a resolver lists
  * first decides whether a machine can reach MetaApi at all, so a 503 or a
- * refused connection from one address moves on to the next. Any other status
- * is an answer about the request itself, and is thrown at once.
+ * refused connection from one address moves on to the next. A 504 is a
+ * different animal — MetaApi saying it has not finished reconnecting to the
+ * broker — and no address answers until that clears, so the list is walked
+ * twice with a pause between, the same single retry `supabase.ts` makes for
+ * PGRST303. A reconnect slower than the pause still fails the pass, which
+ * costs nothing: the next one is due in fifteen minutes and re-reads
+ * everything. Any other status is an answer about the request itself, and is
+ * thrown at once.
  */
 async function get<T>(source: Source, path: string, query = ''): Promise<T> {
   const host = hostOf(source.credentials)
   const fullPath = `/users/current/accounts/${source.credentials.accountId}${path}${query}`
 
   let unavailable: Error | undefined
-  for (const address of source.addresses) {
-    let reply: Reply
-    try {
-      reply = await source.transport(host, address, fullPath, source.credentials.token)
-    } catch (error) {
-      unavailable = new Error(`MetaApi ${address} on ${path}: ${(error as Error).message}`)
-      continue
-    }
-    if (reply.status === 200) return JSON.parse(reply.body) as T
+  for (let pass = 0; pass < 2; pass++) {
+    if (pass > 0) await new Promise((done) => setTimeout(done, RECONNECT_PAUSE))
+    for (const address of source.addresses) {
+      let reply: Reply
+      try {
+        reply = await source.transport(host, address, fullPath, source.credentials.token)
+      } catch (error) {
+        unavailable = new Error(`MetaApi ${address} on ${path}: ${(error as Error).message}`)
+        continue
+      }
+      if (reply.status === 200) return JSON.parse(reply.body) as T
 
-    // The body names the cause. From the status alone an expired token, a
-    // wrong region and an undeployed account are indistinguishable.
-    const error = new Error(`MetaApi ${reply.status} on ${path} via ${address}: ${reply.body.slice(0, 300)}`)
-    if (reply.status !== 503) throw error
-    unavailable = error
+      // The body names the cause. From the status alone an expired token, a
+      // wrong region and an undeployed account are indistinguishable.
+      const error = new Error(`MetaApi ${reply.status} on ${path} via ${address}: ${reply.body.slice(0, 300)}`)
+      if (!TRANSIENT.has(reply.status)) throw error
+      unavailable = error
+    }
   }
   throw unavailable ?? new Error(`MetaApi: ${host} resolved to no address`)
 }
@@ -222,8 +261,8 @@ export async function fetchFeed(
   ])
   return {
     account,
-    deals: deals.map(withoutFetchTimeFields),
-    orders: orders.map(withoutFetchTimeFields),
+    deals: deals.map(withoutUnsettledFields),
+    orders: orders.map(withoutUnsettledFields),
     fetchedAt: now,
   }
 }

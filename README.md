@@ -22,7 +22,9 @@ are the only rows in Supabase neither the broker nor this job authored, which
 is why they are the only ones with columns of their own and the only ones a
 signed-in user is allowed to change. A project that ran `schema.sql` before
 those tables existed brings itself up to date with
-`supabase/2026-09-21-tags-and-grade.sql`.
+`supabase/2026-09-21-tags-and-grade.sql`. One that recorded orders before
+2026-09-22 also needs `supabase/2026-09-22-drop-open-price.sql`, which drops a
+field the import no longer keeps.
 
 ```
 MetaApi ──▶ trading-journal ──▶ Supabase ──▶ trading-journal-frontend
