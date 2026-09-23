@@ -26,6 +26,19 @@ those tables existed brings itself up to date with
 2026-09-22 also needs `supabase/2026-09-22-drop-open-price.sql`, which drops a
 field the import no longer keeps.
 
+The third thing of yours is the tape: a clip you recorded of a trade. It goes in
+the private Storage bucket `videos`, in a folder named by the MetaApi account id
+and then the position id — `{account_id}/{position_id}/clip.mp4` — put there
+from the trade's own tab on the page and streamed back from it. No table lists
+them, because the bucket already knows which trades have one. The page can add
+a clip but never replace or remove one; that is done in the dashboard. A
+project set up before 2026-09-23 adds the bucket with
+`supabase/2026-09-23-videos.sql` and the page's right to add to it with
+`supabase/2026-09-23-videos-from-the-page.sql`, and every project raises the
+upload limit under Project Settings → Storage, which starts at 50 MB. Export as
+MP4, H.264 with AAC, with faststart on, so playback begins before the download
+ends.
+
 ```
 MetaApi ──▶ trading-journal ──▶ Supabase ──▶ trading-journal-frontend
             (fetch, append)     (the record) (read, rebuild, draw)

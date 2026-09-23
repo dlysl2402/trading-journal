@@ -105,5 +105,20 @@ insert into tags (slug, kind, label, description, sort) values
   ('chased',                     'mistake', 'Chased',                     'Entered late, after the move you wanted had already happened.', 1),
   ('cut-early',                  'mistake', 'Cut early',                  'Closed before the stop or the target had anything to say.', 2);
 
--- Videos live in a private Storage bucket named "videos", one folder per
--- trade: {account_id}/{position_id}/. Nothing about them is in a table.
+-- The tape: the clips you recorded of a trade. They live in Storage, not in a
+-- table — a private bucket with one folder per trade, {account_id}/{position_id}/,
+-- so the page finds a trade's clips by listing its folder and there is no row
+-- that could fall out of step with the files. MP4 only, so a file the browser
+-- could not play is refused at the door. The size cap is the project's global
+-- upload limit (Project Settings → Storage), which starts at 50 MB on every
+-- plan and is raised there, not here. The import never touches this bucket.
+-- The page, signed in as you, reads it and adds to it from a trade's own tab,
+-- and can neither replace nor remove a clip: that is the dashboard's, on
+-- purpose, so a recording cannot be lost to a misclick on the page.
+insert into storage.buckets (id, name, public, allowed_mime_types)
+  values ('videos', 'videos', false, '{video/mp4}');
+
+create policy read_videos on storage.objects for select to authenticated
+  using (bucket_id = 'videos');
+create policy add_videos  on storage.objects for insert to authenticated
+  with check (bucket_id = 'videos');
