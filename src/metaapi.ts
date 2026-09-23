@@ -36,6 +36,24 @@ export function withoutUnsettledFields<T extends object>(row: T): T {
   return copy as T
 }
 
+/**
+ * Only the order that opened a position keeps its stop and target. They were
+ * placed with it, and the page reads them as the trade's initial levels. A
+ * closing order has none of its own: while it is fresh MetaApi stamps it with
+ * the position's levels, and once it re-reads history from the terminal it
+ * serves the order bare. That stopped the record on 2026-09-22 — the same
+ * story as `openPrice`, on two more fields. Nothing is lost: the level a close
+ * fired at is on its deal. A position takes the ticket of the order that
+ * opened it, so `id === positionId` names that order.
+ */
+function withoutClosingLevels(order: RawOrder): RawOrder {
+  if (order.id === order.positionId) return order
+  const copy = { ...order }
+  delete copy.stopLoss
+  delete copy.takeProfit
+  return copy
+}
+
 import { resolve4 } from 'node:dns/promises'
 import { request } from 'node:https'
 
@@ -101,11 +119,14 @@ export interface RawDeal {
 
 export interface RawOrder {
   id: string
+  /** The position's ticket, which is the id of the order that opened it. */
+  positionId?: string
   /**
    * The comment as MetaApi first saw it. MT5 overwrites a comment with the
    * bracket that fired, so this may read "[tp 4382.63]" rather than a tag.
    */
   comment?: string
+  /** Only on the order that opened the position; see `withoutClosingLevels`. */
   stopLoss?: number
   takeProfit?: number
 }
@@ -262,7 +283,7 @@ export async function fetchFeed(
   return {
     account,
     deals: deals.map(withoutUnsettledFields),
-    orders: orders.map(withoutUnsettledFields),
+    orders: orders.map(withoutUnsettledFields).map(withoutClosingLevels),
     fetchedAt: now,
   }
 }

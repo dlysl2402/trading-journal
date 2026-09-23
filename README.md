@@ -24,7 +24,9 @@ signed-in user is allowed to change. A project that ran `schema.sql` before
 those tables existed brings itself up to date with
 `supabase/2026-09-21-tags-and-grade.sql`. One that recorded orders before
 2026-09-22 also needs `supabase/2026-09-22-drop-open-price.sql`, which drops a
-field the import no longer keeps.
+field the import no longer keeps, and one that recorded a closing order before
+2026-09-23 needs `supabase/2026-09-23-drop-closing-order-levels.sql` for the
+same reason.
 
 The third thing of yours is the tape: a clip you recorded of a trade. It goes in
 the private Storage bucket `videos`, in a folder named by the MetaApi account id

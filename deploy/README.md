@@ -35,7 +35,11 @@ every run that followed for thirteen hours. The answer was not to correct one
 row but to stop recording the field — `UNSETTLED_FIELDS` in `metaapi.ts`, and
 `supabase/2026-09-22-drop-open-price.sql` for the rows already stored. If a
 run names a row that differs in a field nothing reads, suspect this before
-suspecting the broker.
+suspecting the broker. It happened again on 2026-09-22 with `stopLoss` and
+`takeProfit` on a closing order — fresh, it carried the position's levels;
+re-read from history, neither. Only the order that opened a position keeps
+them now, and `supabase/2026-09-23-drop-closing-order-levels.sql` brings the
+rows already stored into line.
 
 ## On App Platform
 

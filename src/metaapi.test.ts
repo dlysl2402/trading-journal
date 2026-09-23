@@ -61,6 +61,23 @@ test('what MetaApi restates after the fact is dropped from deals and orders', as
   assert.deepEqual(feed.orders, [{ id: '2' }])
 })
 
+test('only the order that opened a position keeps its stop and target', async () => {
+  // A closing order has no levels of its own: MetaApi stamps a fresh one with
+  // the position's, then serves it bare once it re-reads history.
+  const api = metaapi({ '10.0.0.1': (path) =>
+    path.includes('/accountInformation') ? ok(account)
+      : path.includes('/history-deals') ? ok([])
+      : ok([
+        { id: '7', positionId: '7', stopLoss: 1, takeProfit: 2 },
+        { id: '8', positionId: '7', stopLoss: 1, takeProfit: 2 },
+      ]) })
+  const feed = await api.fetch()
+  assert.deepEqual(feed.orders, [
+    { id: '7', positionId: '7', stopLoss: 1, takeProfit: 2 },
+    { id: '8', positionId: '7' },
+  ])
+})
+
 test('a 504 is MetaApi reconnecting to the broker, so the list is asked again', async () => {
   // No address answers during a reconnect, so trying the next one is not the
   // remedy; asking again a moment later is.
