@@ -16,8 +16,9 @@ signs in to Supabase, reads this record in the browser, groups the deals into
 round trips and works every figure out from them. It never talks to MetaApi and
 never writes a broker row.
 
-It does write two tables: `annotations`, the note, grade and tags you put
-against a trade, and `tags`, the vocabulary those tags are chosen from. Those
+It does write two tables: `annotations`, the pre-trade, in-trade and
+post-trade notes, grade and tags you put against a trade, and `tags`, the
+vocabulary those tags are chosen from. Those
 are the only rows in Supabase neither the broker nor this job authored, which
 is why they are the only ones with columns of their own and the only ones a
 signed-in user is allowed to change. A project that ran `schema.sql` before
@@ -26,7 +27,9 @@ those tables existed brings itself up to date with
 2026-09-22 also needs `supabase/2026-09-22-drop-open-price.sql`, which drops a
 field the import no longer keeps, and one that recorded a closing order before
 2026-09-23 needs `supabase/2026-09-23-drop-closing-order-levels.sql` for the
-same reason.
+same reason. One set up before 2026-09-27 adds the pre-trade and in-trade notes
+with `supabase/2026-09-27-trade-notes.sql`, run before the page that reads
+them is deployed.
 
 The third thing of yours is the tape: a clip you recorded of a trade. It goes in
 the private Storage bucket `videos`, in a folder named by the MetaApi account id

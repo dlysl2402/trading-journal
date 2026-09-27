@@ -66,7 +66,9 @@ create table tags (
 create table annotations (
   account_id  text not null,
   position_id text not null,
-  note        text,
+  pre_trade   text,  -- what you saw and why you took it
+  in_trade    text,  -- what happened while it was open, and what you did
+  note        text,  -- the post-trade review; all three are written after the close
   tags        text[] not null default '{}',  -- tags.slug, at most one of kind 'play'
   grade       text check (grade in ('A', 'B', 'C')),  -- the setup at entry, never the result
   updated_at  timestamptz not null default now(),
