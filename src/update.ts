@@ -54,12 +54,12 @@ export async function update(): Promise<string> {
   mkdirSync('data', { recursive: true })
   writeFileSync('data/snapshot.json', JSON.stringify(feed, null, 2))
 
+  // No balance: the log is read as often as the page, and neither shows money.
   const { account } = feed
   return [
     `${feed.fetchedAt.toISOString()} ${account.login} ${account.broker}`,
     `${feed.deals.length} deals on record, ${added.deals.length} new`,
     `${feed.orders.length} orders on record, ${added.orders.length} new`,
-    `balance ${account.balance.toFixed(2)} ${account.currency}`,
   ].join(' · ')
 }
 
